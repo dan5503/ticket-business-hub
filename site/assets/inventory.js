@@ -207,7 +207,6 @@ export async function renderInventory(root) {
   });
   root.replaceChildren(
     h("div", { class: "page-head" },
-      h("div", {}, h("h1", { text: "Inventory" }), h("p", { class: "sub", text: "Tickets you own, copied automatically from your Google Sheet." })),
-      h("span", { class: "spacer" }), h("button", { type: "button", class: "ghost", onclick: () => board.reset() }, "Reset layout")),
+      h("div", {}, h("h1", { text: "Inventory" }), h("p", { class: "sub", text: "Tickets you own, copied automatically from your Google Sheet." }))),
     board.el);
 }

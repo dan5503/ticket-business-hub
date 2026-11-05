@@ -110,7 +110,6 @@ export async function renderDiscord(root) {
   });
   root.replaceChildren(
     h("div", { class: "page-head" },
-      h("div", {}, h("h1", { text: "Discord" }), h("p", { class: "sub", text: `Sales from #${CONFIG.discordChannel}, sent by your Chrome extension.` })),
-      h("span", { class: "spacer" }), h("button", { type: "button", class: "ghost", onclick: () => board.reset() }, "Reset layout")),
+      h("div", {}, h("h1", { text: "Discord" }), h("p", { class: "sub", text: `Sales from #${CONFIG.discordChannel}, sent by your Chrome extension.` }))),
     board.el);
 }
