@@ -4,7 +4,7 @@ import { barChart, lineChart, legend } from "./charts.js";
 import { exportCsv } from "./dashboard.js";
 import { loadPrefs, savePrefs } from "./layout.js";
 
-const COLS = "id,order_number,artist,venue,city,event_date,section,row_name,quantity,total_sale,total_cost,profit,roi,cost_per,sold_per,purchase_date,purchased_at,sold_date,sold_at,account,marketplace,result,created_at";
+const COLS = "id,discord_message_id,order_number,artist,venue,city,event_date,section,row_name,quantity,total_sale,total_cost,profit,roi,cost_per,sold_per,purchase_date,purchased_at,sold_date,sold_at,account,marketplace,result,created_at";
 const TABS = [["tag", "TAG & Commission"], ["overview", "Overview"], ["monthly", "Monthly"], ["sales", "Sales data"], ["artists", "Artists"], ["venues", "Venues"], ["buying", "Buy timing"], ["losses", "Losses"], ["insights", "Buy insights"]];
 const NY = "America/New_York";
 const nyDay = new Intl.DateTimeFormat("en-CA", { timeZone: NY, year: "numeric", month: "2-digit", day: "2-digit" });
@@ -55,8 +55,10 @@ function sectionLevel(sec) {
 function norm(r) {
   const n = (v) => (v == null || v === "" ? null : Number(v));
   const o = { ...r, total_sale: n(r.total_sale) ?? 0, total_cost: n(r.total_cost) ?? 0, profit: n(r.profit) ?? 0, roi: n(r.roi), cost_per: n(r.cost_per), sold_per: n(r.sold_per), quantity: n(r.quantity) ?? 0 };
-  o.ts = r.sold_at ? Date.parse(r.sold_at) : r.sold_date ? Date.parse(r.sold_date + "T12:00:00") : Date.parse(r.created_at);
-  o.day = r.sold_at ? nyDay.format(new Date(r.sold_at)) : r.sold_date || nyDay.format(new Date(r.created_at));
+  // sale time: from the post; if missing, when the Discord message was posted (never "when it was added")
+  const posted = /^\d{15,20}$/.test(r.discord_message_id || "") ? Number(BigInt(r.discord_message_id) >> 22n) + 1420070400000 : null;
+  o.ts = r.sold_at ? Date.parse(r.sold_at) : r.sold_date ? Date.parse(r.sold_date + "T12:00:00") : posted ?? Date.parse(r.created_at);
+  o.day = r.sold_at ? nyDay.format(new Date(r.sold_at)) : r.sold_date || nyDay.format(new Date(o.ts));
   o.month = o.day.slice(0, 7); o.year = o.day.slice(0, 4);
   const bought = r.purchased_at ? Date.parse(r.purchased_at) : r.purchase_date ? Date.parse(r.purchase_date + "T12:00:00") : null;
   o.tts = bought && o.ts >= bought ? (o.ts - bought) / DAY : null;                       // days to sell
@@ -550,17 +552,16 @@ function insightsView(rows) {
   const watch = h("div", {}, empty("Loading your inventory…"));
   (async () => {
     try {
-      if (!invCache) invCache = await fetchAll("purchases", "id,artist,venue,event_date,quantity,total_cost,cost_per,order_number", "event_date");
-      const soldOrders = new Set(ALL.map((r) => (r.order_number || "").trim().toLowerCase()).filter(Boolean));
+      if (!invCache) invCache = await fetchAll("inventory_live", "id,artist,venue,event_date,quantity,remaining_qty,remaining_cost,cost_per,order_number", "event_date");
       const today = todayISO(), soon = addDays(today, 21);
       const byArtist = new Map(groupBy(ALL, (r) => r.artist).map((g) => [g.key.toLowerCase(), g]));
-      const list = invCache.filter((p) => p.event_date && p.event_date >= today && p.event_date <= soon && !(p.order_number && soldOrders.has(p.order_number.trim().toLowerCase())))
+      const list = invCache.filter((p) => p.event_date && p.event_date >= today && p.event_date <= soon && p.remaining_qty > 0)
         .map((p) => { const g = byArtist.get((p.artist || "").toLowerCase()); return { ...p, hist: g, risk: !g ? "No history" : g.roi < 0 ? "High" : g.roi < 10 ? "Medium" : "Low" }; })
         .sort((a, b) => a.event_date.localeCompare(b.event_date));
       watch.replaceChildren(list.length ? table([
         ["event_date", "Show", "", (p) => h("span", { class: "num", text: fmtDate(p.event_date) })],
         ["artist", "Artist", "", (p) => h("div", {}, p.hist ? entityLink("artist", p.hist.key) : h("span", { text: p.artist || "—" }), h("span", { class: "sub", text: p.venue || "" }))],
-        ["quantity", "Tickets", "r"], ["total_cost", "At cost", "r", (p) => money(p.total_cost == null ? null : Number(p.total_cost))],
+        ["remaining_qty", "Left", "r"], ["remaining_cost", "At cost", "r", (p) => money(Number(p.remaining_cost || 0))],
         ["hist", "History", "r", (p) => (p.hist ? h("span", { class: cls(p.hist.roi), text: `${sp(p.hist.roi)} ROI` }) : h("span", { class: "muted", text: "—" }))],
         ["risk", "Risk", "", (p) => h("span", { class: `rating ${p.risk === "High" ? "avoid" : p.risk === "Medium" ? "careful" : p.risk === "Low" ? "buy" : "new"}`, text: p.risk })],
       ], list.slice(0, 40)) : empty(invCache.length ? "No unsold tickets for shows in the next 3 weeks." : "Connect your Google Sheet on the Inventory page to see this."));

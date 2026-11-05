@@ -3,7 +3,7 @@ import { parseCsv, detect, toRecords, FIELDS } from "./csv.js";
 import { exportCsv } from "./dashboard.js";
 import { makeBoard } from "./layout.js";
 
-const COLS = "id,order_number,artist,venue,event_date,purchase_date,section,row_name,quantity,total_cost,cost_per,account,status,created_at";
+const COLS = "id,order_number,artist,venue,event_date,purchase_date,section,row_name,quantity,total_cost,cost_per,account,status,sold_qty,remaining_qty,remaining_cost,sold_revenue,sold_profit,last_sold_at";
 
 async function callSheet(body) {
   const { data, error } = await sb.functions.invoke("sheet-sync", { body });
@@ -22,20 +22,21 @@ const ago = (iso) => {
 };
 
 export async function renderInventory(root) {
-  const [items, soldRows, srcRes] = await Promise.all([
-    fetchAll("purchases", COLS, "event_date"),
-    fetchAll("sales", "id,order_number", "created_at"),
+  const [items, srcRes] = await Promise.all([
+    fetchAll("inventory_live", COLS, "event_date"),
     sb.from("inventory_sources").select("sheet_url,mapping,last_rows,last_synced_at,last_checked_at,last_status,last_error").maybeSingle(),
   ]);
   const source = srcRes.data;
-  const soldOrders = new Set(soldRows.map((r) => (r.order_number || "").trim().toLowerCase()).filter(Boolean));
-  const isSold = (p) => p.order_number && soldOrders.has(p.order_number.trim().toLowerCase());
+  // Sales offset inventory: each order's tickets minus the tickets sold on that order number.
+  const isSold = (p) => p.remaining_qty === 0 && p.quantity > 0;
   const today = todayISO();
   const reload = () => renderInventory(root);
 
-  const unsold = items.filter((p) => !isSold(p));
-  const upcoming = unsold.filter((p) => !p.event_date || p.event_date >= today);
+  const unsold = items.filter((p) => p.remaining_qty > 0);
+  const upcoming = unsold.filter((p) => p.event_date && p.event_date >= today);
+  const undated = unsold.filter((p) => !p.event_date);
   const past = unsold.filter((p) => p.event_date && p.event_date < today);
+  const soldItems = items.filter((p) => p.sold_qty > 0);
   const sum = (arr, k) => arr.reduce((a, r) => a + Number(r[k] || 0), 0);
 
   // ---------- Google Sheet panel ----------
@@ -155,39 +156,43 @@ export async function renderInventory(root) {
   function overview() {
     const stat = (label, value, foot) => h("div", { class: "stat" }, h("div", { class: "label", text: label }), h("div", { class: "value", text: value }), h("div", { class: "foot", text: foot }));
     return h("div", { class: "headline inv" },
-      stat("Money tied up", fmtMoney(sum(upcoming, "total_cost")), `${fmtInt(sum(upcoming, "quantity"))} tickets for upcoming shows`),
-      stat("Orders on your sheet", fmtInt(items.length), `${fmtInt(sum(items, "quantity"))} tickets in total`),
-      stat("Already sold", fmtInt(items.length - unsold.length), "Matched to a sale by order number"),
-      stat("Past shows, not sold", fmtInt(past.length), past.length ? `${fmtMoney(sum(past, "total_cost"))} at cost. Worth checking.` : "Nothing left behind"));
+      stat("Tickets on hand", fmtInt(sum(upcoming, "remaining_qty")), `${fmtInt(upcoming.length)} orders for upcoming shows`),
+      stat("Money tied up", fmtMoney(sum(upcoming, "remaining_cost")), "What your unsold upcoming tickets cost"),
+      stat("Sold from inventory", fmtInt(sum(items, "sold_qty")), `Tickets matched to Discord sales by order #`),
+      stat("Past shows, not matched", fmtInt(sum(past, "remaining_qty")), past.length ? `${fmtMoney(sum(past, "remaining_cost"))} at cost, no sale found` : "Nothing left behind"));
   }
 
   // ---------- table ----------
   let show = "upcoming", q = "";
   function table() {
     const cols = [["artist", "Artist or event"], ["event_date", "Show date"], ["venue", "Venue"], ["section", "Section"], ["row_name", "Row"],
-      ["quantity", "Tickets"], ["cost_per", "Cost per"], ["total_cost", "Total cost"], ["purchase_date", "Bought"], ["account", "Account"], ["order_number", "Order #"]];
+      ["quantity", "Bought"], ["sold_qty", "Sold"], ["remaining_qty", "Left"], ["cost_per", "Cost per"], ["remaining_cost", "Left at cost"], ["purchase_date", "Bought on"], ["account", "Account"], ["order_number", "Order #"]];
     const tbody = h("tbody"), count = h("span", { class: "muted small" });
     const chips = h("div", { class: "chips" });
     const search = h("input", { type: "search", placeholder: "Search inventory", "aria-label": "Search inventory", value: q });
     search.oninput = () => { q = search.value.toLowerCase(); paint(); };
+    const sets = { upcoming, undated, past, sold: soldItems, all: items };
     const list = () => {
-      const base = show === "upcoming" ? upcoming : show === "past" ? past : items;
+      const base = sets[show] || items;
       return (q ? base.filter((p) => [p.artist, p.venue, p.account, p.order_number, p.section].some((v) => (v || "").toLowerCase().includes(q))) : base)
-        .slice().sort((a, b) => (a.event_date || "9999").localeCompare(b.event_date || "9999"));
+        .slice().sort((a, b) => (show === "sold" ? String(b.last_sold_at || "").localeCompare(String(a.last_sold_at || "")) : (a.event_date || "9999").localeCompare(b.event_date || "9999")));
     };
     function paint() {
       const l = list();
       [...chips.children].forEach((b) => b.classList.toggle("on", b.dataset.v === show));
-      count.textContent = `${fmtInt(l.length)} orders`;
+      count.textContent = `${fmtInt(l.length)} orders · ${fmtInt(sum(l, show === "sold" ? "sold_qty" : "remaining_qty"))} tickets`;
       tbody.replaceChildren(...l.slice(0, 500).map((p) => h("tr", {},
-        h("td", { class: "strong", title: p.artist || "" }, p.artist || "—", isSold(p) ? h("span", { class: "pill good", text: "Sold" }) : ""),
+        h("td", { class: "strong", title: p.artist || "" }, p.artist || "—",
+          p.remaining_qty === 0 && p.quantity > 0 ? h("span", { class: "pill good", text: "Sold out" }) : p.sold_qty > 0 ? h("span", { class: "pill meh", text: "Partly sold" }) : ""),
         h("td", { class: "num", text: fmtDate(p.event_date) }), h("td", { text: p.venue || "—" }),
-        h("td", { text: p.section || "—" }), h("td", { text: p.row_name || "—" }), h("td", { class: "r num", text: p.quantity ?? "—" }),
+        h("td", { text: p.section || "—" }), h("td", { text: p.row_name || "—" }),
+        h("td", { class: "r num", text: p.quantity ?? "—" }), h("td", { class: "r num", text: p.sold_qty || "—" }),
+        h("td", { class: "r num strong", text: p.remaining_qty }),
         h("td", { class: "r num", text: fmtMoney(p.cost_per == null ? null : Number(p.cost_per), true) }),
-        h("td", { class: "r num", text: fmtMoney(p.total_cost == null ? null : Number(p.total_cost), true) }),
+        h("td", { class: "r num", text: fmtMoney(Number(p.remaining_cost || 0), true) }),
         h("td", { class: "num", text: fmtDate(p.purchase_date) }), h("td", { text: p.account || "—" }), h("td", { text: p.order_number || "—" }))));
     }
-    [["upcoming", "Upcoming"], ["past", "Past, not sold"], ["all", "Everything"]].forEach(([v, t]) =>
+    [["upcoming", "On hand"], ["sold", "Sold"], ["past", "Past shows, not sold"], ["undated", "No show date"], ["all", "Everything"]].forEach(([v, t]) =>
       chips.append(h("button", { type: "button", "data-v": v, text: t, onclick: () => { show = v; paint(); } })));
     paint();
     if (!items.length) return h("div", { class: "empty" }, h("h2", { text: "No inventory yet" }), h("p", { text: "Connect your Google Sheet above, or upload a CSV file." }));
@@ -195,14 +200,14 @@ export async function renderInventory(root) {
       h("div", { class: "row" }, chips, count, h("span", { class: "spacer" }), h("div", { style: { minWidth: "220px", flex: "1 1 220px", maxWidth: "360px" } }, search),
         h("button", { type: "button", onclick: () => exportCsv(cols, list(), "inventory") }, "Download CSV")),
       h("div", { class: "table-wrap mt" }, h("table", {},
-        h("thead", {}, h("tr", {}, cols.map(([k, t]) => h("th", { class: ["quantity", "cost_per", "total_cost"].includes(k) ? "r" : "", text: t })))), tbody)),
+        h("thead", {}, h("tr", {}, cols.map(([k, t]) => h("th", { class: ["quantity", "sold_qty", "remaining_qty", "cost_per", "remaining_cost"].includes(k) ? "r" : "", text: t })))), tbody)),
       list().length > 500 ? h("p", { class: "muted small mt", text: "Showing the first 500. Search to narrow it down." }) : "");
   }
 
   const board = await makeBoard("inventory", ["sheet", "overview", "table", "csv"], {
     sheet: { title: "Google Sheet", collapsed: false, render: sheetPanel },
     overview: { title: "Overview", bare: true, render: overview },
-    table: { title: "Your tickets", hint: "Tickets you've bought. “Sold” means an order number on your sheet matches a sale from Discord.", render: table },
+    table: { title: "Your tickets", hint: "Sales come off automatically: each order shows how many tickets you bought, how many sold on Discord (matched by order #), and how many are left.", render: table },
     csv: { title: "Upload a file instead", collapsed: true, render: csvPanel },
   });
   root.replaceChildren(
