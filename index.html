@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://jhbhkjomjjbldlofuigt.supabase.co wss://jhbhkjomjjbldlofuigt.supabase.co; base-uri 'none'; form-action 'self'">
+  <meta name="referrer" content="no-referrer">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Sign in · Business Hub</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+  <div class="auth-wrap">
+    <div class="auth-card">
+      <div class="brand-mark">DB</div>
+
+      <form id="login-form" novalidate>
+        <h1>Business Hub</h1>
+        <p class="muted small">Sign in to continue.</p>
+        <label for="email">Email</label>
+        <input id="email" type="email" autocomplete="username" required>
+        <label for="password">Password</label>
+        <input id="password" type="password" autocomplete="current-password" required>
+        <button class="primary" type="submit">Sign in</button>
+        <div class="row mt">
+          <button type="button" class="linkish" id="show-forgot">Forgot password?</button>
+          <span class="spacer"></span>
+          <button type="button" class="linkish" id="show-signup">First time? Create account</button>
+        </div>
+      </form>
+
+      <form id="forgot-form" class="hidden" novalidate>
+        <h1>Reset password</h1>
+        <p class="muted small">We'll email you a link to set a new password.</p>
+        <label for="forgot-email">Email</label>
+        <input id="forgot-email" type="email" autocomplete="username" required>
+        <button class="primary" type="submit">Send reset link</button>
+        <div class="mt"><button type="button" class="linkish back">← Back to sign in</button></div>
+      </form>
+
+      <form id="signup-form" class="hidden" novalidate>
+        <h1>Create your account</h1>
+        <p class="muted small">Only the owner's email is allowed. Everyone else is blocked.</p>
+        <label for="su-email">Email</label>
+        <input id="su-email" type="email" autocomplete="username" required>
+        <label for="su-password">Password (at least 12 characters)</label>
+        <input id="su-password" type="password" autocomplete="new-password" minlength="12" required>
+        <label for="su-password2">Confirm password</label>
+        <input id="su-password2" type="password" autocomplete="new-password" minlength="12" required>
+        <button class="primary" type="submit">Create account</button>
+        <div class="mt"><button type="button" class="linkish back">← Back to sign in</button></div>
+      </form>
+
+      <div id="msg" class="msg hidden" role="alert"></div>
+    </div>
+  </div>
+  <script src="assets/vendor/supabase.js"></script>
+  <script src="config.js"></script>
+  <script type="module" src="assets/login.js"></script>
+</body>
+</html>

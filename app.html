@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://jhbhkjomjjbldlofuigt.supabase.co wss://jhbhkjomjjbldlofuigt.supabase.co; base-uri 'none'; form-action 'self'">
+  <meta name="referrer" content="no-referrer">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Business Hub</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand"><div class="brand-mark">DB</div><span class="brand-name">Business Hub</span></div>
+      <nav class="tabs" aria-label="Sections">
+        <a href="#dashboard" data-tab="dashboard">Sales Dashboard</a>
+        <a href="#inventory" data-tab="inventory">Inventory</a>
+        <a href="#discord" data-tab="discord">Discord Sales</a>
+        <a href="#links" data-tab="links">My Sites</a>
+      </nav>
+      <span class="spacer"></span>
+      <button class="ghost icon" id="signout" title="Sign out">Sign out</button>
+    </div>
+  </header>
+  <main id="view" aria-live="polite"></main>
+  <script src="assets/vendor/supabase.js"></script>
+  <script src="config.js"></script>
+  <script type="module" src="assets/app.js"></script>
+</body>
+</html>
