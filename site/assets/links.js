@@ -39,7 +39,7 @@ export async function renderLinks(root) {
       l.description ? h("div", { class: "desc", text: l.description }) : null,
       credBox,
       h("div", { class: "actions" },
-        h("a", { class: "btn primary", href: l.url, target: "_blank", rel: "noopener noreferrer" }, "Open ↗"),
+        h("a", { class: "btn primary", href: l.url, target: "_blank", rel: "noopener noreferrer" }, "Open site"),
         h("span", { class: "spacer" }),
         h("button", { class: "ghost icon", type: "button", "aria-label": `Edit ${l.title}`, onclick: () => editLink(l) }, "Edit")));
   }
@@ -87,7 +87,7 @@ export async function renderLinks(root) {
       h("div", { class: "row" }, h("div", { class: "grow" }, field("l-cat", "Category", f.category)), h("div", { style: { width: "120px" } }, field("l-icon", "Icon", f.icon))),
       h("datalist", { id: "l-cats" }, cats.map((c) => h("option", { value: c }))),
       field("l-desc", "Short description (optional)", f.description),
-      h("h3", { class: "mt", text: "Saved login (optional, stored encrypted)" }),
+      h("h3", { class: "mt", text: "Saved login (optional, encrypted)" }),
       field("l-user", "Username / email", f.username), field("l-pass", "Password", f.password),
       l.has_login ? h("label", { class: "check" }, f.clear, "Remove the saved login") : null),
       (close) => [
@@ -124,8 +124,8 @@ export async function renderLinks(root) {
   }
 
   root.replaceChildren(
-    h("div", { class: "page-head" }, h("div", {}, h("h1", { text: "My Sites" }), h("div", { class: "sub", text: "All your websites and tools, with logins kept encrypted." })),
-      h("span", { class: "spacer" }), h("button", { class: "primary", type: "button", onclick: () => editLink(null) }, "＋ Add site")),
+    h("div", { class: "page-head" }, h("div", {}, h("h1", { text: "My Sites" }), h("p", { class: "sub", text: "Your websites and tools. Saved logins are encrypted and stay hidden until you click Reveal." })),
+      h("span", { class: "spacer" }), h("button", { class: "primary", type: "button", onclick: () => editLink(null) }, "Add a site")),
     h("div", { class: "row" }, search), listEl);
   paint();
 }

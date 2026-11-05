@@ -1,4 +1,5 @@
 import { h, s, fetchAll, fmtMoney, fmtMoneyShort, fmtInt, fmtPct, fmtDate, monthLabel, signClass, todayISO } from "./common.js";
+import { makeBoard } from "./layout.js";
 
 const COLS = "id,order_number,artist,venue,event_date,section,row_name,quantity,total_sale,total_cost,profit,roi,cost_per,sold_per,purchase_date,sold_date,account,marketplace,created_at";
 const num = (v) => (v == null || v === "" ? 0 : Number(v));
@@ -22,7 +23,7 @@ function groupBy(rows, keyFn) {
   return [...m].map(([key, rs]) => ({ key, ...agg(rs) }));
 }
 
-/* ---------- presets ---------- */
+const PERIODS = [["all", "All time"], ["ytd", "This year"], ["12m", "Last 12 months"], ["90d", "Last 90 days"], ["30d", "Last 30 days"]];
 function presetRange(p) {
   const t = new Date(), iso = (d) => d.toISOString().slice(0, 10);
   const back = (days) => { const d = new Date(); d.setDate(d.getDate() - days); return iso(d); };
@@ -30,7 +31,6 @@ function presetRange(p) {
     case "30d": return [back(30), todayISO()];
     case "90d": return [back(90), todayISO()];
     case "ytd": return [`${t.getFullYear()}-01-01`, todayISO()];
-    case "lastyear": return [`${t.getFullYear() - 1}-01-01`, `${t.getFullYear() - 1}-12-31`];
     case "12m": return [back(365), todayISO()];
     default: return ["", ""];
   }
@@ -38,42 +38,43 @@ function presetRange(p) {
 
 export async function renderDashboard(root) {
   const all = await fetchAll("sales", COLS, "sold_date");
-  const state = { preset: "all", from: "", to: "", artist: "", venue: "", account: "", tagVisible: false, rankMetric: "profit" };
+  let tSort = "sold_date", tDir = -1, tPage = 0, tQ = "";
+  const state = { preset: "all", from: "", to: "", artist: "", venue: "", account: "", tagVisible: false, rankBy: "artist", rankMetric: "profit" };
 
   if (!all.length) {
-    root.replaceChildren(h("div", { class: "card empty" },
-      h("h2", { text: "No sales yet" }),
-      h("p", { text: "Your sales will show up here once the Discord extension sends them, or once you paste them on the Discord Sales page." }),
-      h("a", { class: "btn primary", href: "#discord" }, "Go to Discord Sales")));
+    root.replaceChildren(
+      h("div", { class: "page-head" }, h("div", {}, h("h1", { text: "Sales" }))),
+      h("div", { class: "card empty" },
+        h("h2", { text: "No sales yet" }),
+        h("p", { text: "Open #danielbehnam-sales in Chrome, click the ALLPWST Discord Data extension and choose “Sync All History”. Your sales will appear here." }),
+        h("a", { class: "btn primary", href: "#discord" }, "Go to Discord")));
     return;
   }
 
   const uniq = (k) => [...new Set(all.map((r) => r[k]).filter(Boolean))].sort((a, b) => a.localeCompare(b));
   const dl = (id, vals) => h("datalist", { id }, vals.map((v) => h("option", { value: v })));
 
-  // ----- filter controls -----
-  const presetSel = h("select", { id: "f-preset" },
-    [["all", "All time"], ["30d", "Last 30 days"], ["90d", "Last 90 days"], ["ytd", "This year"], ["12m", "Last 12 months"], ["lastyear", "Last year"], ["custom", "Custom range"]]
-      .map(([v, t]) => h("option", { value: v, text: t })));
+  // ---------- filters ----------
+  const chips = h("div", { class: "chips", role: "group", "aria-label": "Time period" });
+  const paintChips = () => [...chips.children].forEach((b) => b.classList.toggle("on", b.dataset.p === state.preset));
+  PERIODS.forEach(([v, t]) => chips.append(h("button", { type: "button", "data-p": v, text: t, onclick: () => { state.preset = v; [state.from, state.to] = presetRange(v); fromIn.value = state.from; toIn.value = state.to; paintChips(); refresh(); } })));
   const fromIn = h("input", { type: "date", id: "f-from" }), toIn = h("input", { type: "date", id: "f-to" });
-  const artistIn = h("input", { list: "dl-artist", id: "f-artist", placeholder: "All artists / events", autocomplete: "off" });
-  const venueIn = h("input", { list: "dl-venue", id: "f-venue", placeholder: "All venues", autocomplete: "off" });
-  const acctSel = h("select", { id: "f-account" }, h("option", { value: "", text: "All accounts" }), uniq("account").map((a) => h("option", { value: a, text: a })));
-  const clearBtn = h("button", { class: "ghost", type: "button" }, "Clear filters");
-
-  const filters = h("div", { class: "filters" },
-    h("div", { class: "f narrow" }, h("label", { for: "f-preset", text: "Sold date" }), presetSel),
-    h("div", { class: "f narrow" }, h("label", { for: "f-from", text: "From" }), fromIn),
-    h("div", { class: "f narrow" }, h("label", { for: "f-to", text: "To" }), toIn),
-    h("div", { class: "f" }, h("label", { for: "f-artist", text: "Artist / event" }), artistIn, dl("dl-artist", uniq("artist"))),
-    h("div", { class: "f" }, h("label", { for: "f-venue", text: "Venue" }), venueIn, dl("dl-venue", uniq("venue"))),
-    h("div", { class: "f narrow" }, h("label", { for: "f-account", text: "Buyer account" }), acctSel),
-    clearBtn);
-
-  const body = h("div", { class: "stack" });
-  root.replaceChildren(
-    h("div", { class: "page-head" }, h("div", {}, h("h1", { text: "Sales Dashboard" }), h("div", { class: "sub", text: `${fmtInt(all.length)} sales on record` }))),
-    filters, body);
+  const artistIn = h("input", { list: "dl-artist", id: "f-artist", placeholder: "Any artist or event", autocomplete: "off" });
+  const venueIn = h("input", { list: "dl-venue", id: "f-venue", placeholder: "Any venue", autocomplete: "off" });
+  const acctSel = h("select", { id: "f-account" }, h("option", { value: "", text: "Any account" }), uniq("account").map((a) => h("option", { value: a, text: a })));
+  const more = h("div", { class: "more-filters hidden" },
+    h("div", {}, h("label", { for: "f-from", text: "Sold from" }), fromIn),
+    h("div", {}, h("label", { for: "f-to", text: "Sold until" }), toIn),
+    h("div", {}, h("label", { for: "f-artist", text: "Artist or event" }), artistIn, dl("dl-artist", uniq("artist"))),
+    h("div", {}, h("label", { for: "f-venue", text: "Venue" }), venueIn, dl("dl-venue", uniq("venue"))),
+    h("div", {}, h("label", { for: "f-account", text: "Buyer account" }), acctSel));
+  const activeNote = h("span", { class: "active-filters" });
+  const moreBtn = h("button", { type: "button", onclick: () => more.classList.toggle("hidden") }, "Filters");
+  const clearBtn = h("button", { type: "button", class: "ghost hidden", onclick: () => {
+    Object.assign(state, { preset: "all", from: "", to: "", artist: "", venue: "", account: "" });
+    fromIn.value = toIn.value = artistIn.value = venueIn.value = acctSel.value = ""; paintChips(); refresh();
+  } }, "Clear filters");
+  paintChips();
 
   const filtered = () => all.filter((r) => {
     const d = dayOf(r);
@@ -85,61 +86,81 @@ export async function renderDashboard(root) {
     return true;
   });
 
-  let ro;
-  function draw() {
+  // ---------- data for the current filters ----------
+  let D;
+  function compute() {
     const rows = filtered();
-    if (ro) ro.disconnect();
-    if (!rows.length) { body.replaceChildren(h("div", { class: "card empty" }, h("h2", { text: "No sales match these filters" }))); return; }
-    const t = agg(rows);
-    const months = groupBy(rows, (r) => dayOf(r).slice(0, 7)).sort((a, b) => a.key.localeCompare(b.key));
-    const years = groupBy(rows, (r) => dayOf(r).slice(0, 4)).sort((a, b) => b.key.localeCompare(a.key));
-    const artists = groupBy(rows, (r) => r.artist);
-    const venues = groupBy(rows, (r) => r.venue);
-    const accounts = groupBy(rows, (r) => r.account);
-
-    body.replaceChildren(
-      kpis(t, rows, months),
-      chartCard(months, (o) => (ro = o)),
-      h("div", { class: "grid two" },
-        rankCard("Artists / events", artists),
-        rankCard("Venues", venues)),
-      insightsCard(rows, t, months, years, artists, venues, accounts),
-      h("div", { class: "grid two" }, roiMonthCard(months), roiYearCard(years, accounts)),
-      salesTable(rows));
+    D = {
+      rows, t: agg(rows),
+      months: groupBy(rows, (r) => dayOf(r).slice(0, 7)).sort((a, b) => a.key.localeCompare(b.key)),
+      years: groupBy(rows, (r) => dayOf(r).slice(0, 4)).sort((a, b) => b.key.localeCompare(a.key)),
+      artists: groupBy(rows, (r) => r.artist), venues: groupBy(rows, (r) => r.venue), accounts: groupBy(rows, (r) => r.account),
+    };
+    const extra = [state.artist, state.venue, state.account].filter(Boolean).length + (state.preset === "custom" ? 1 : 0);
+    activeNote.textContent = extra ? `${extra} filter${extra > 1 ? "s" : ""} on, showing ${fmtInt(rows.length)} of ${fmtInt(all.length)} sales` : "";
+    clearBtn.classList.toggle("hidden", !extra && state.preset === "all");
   }
+  const noRows = () => h("p", { class: "muted", text: "No sales match these filters." });
 
-  // ----- KPI tiles; the "tag" (total profit) is hidden until tapped -----
-  function kpis(t, rows, months) {
-    const tagVal = h("div", { class: "value num" });
-    const eye = h("button", { class: "ghost icon eye", type: "button", "aria-pressed": "false" });
+  // ---------- sections ----------
+  let ro;
+  const sections = {
+    overview: { title: "Overview", bare: true, render: () => overview() },
+    monthly: { title: "Revenue and profit by month", hint: "Hover a month to see its numbers.", render: () => (D.rows.length ? chart() : noRows()),
+      actions: () => h("div", { class: "legend" }, h("span", {}, h("span", { class: "sw", style: { background: "var(--series-1)" } }), "Revenue"), h("span", {}, h("span", { class: "sw", style: { background: "var(--series-2)" } }), "Profit")) },
+    rank: { title: "Best and worst", hint: "Your top 5 and bottom 5. Switch between artists and venues, and choose what to rank by.", render: () => (D.rows.length ? ranking() : noRows()), actions: () => rankControls() },
+    sales: { title: "All sales", render: () => (D.rows.length ? salesTable() : noRows()) },
+    insights: { title: "What's working, what isn't", hint: "Patterns in your sales, worked out automatically.", render: () => insights() },
+    roi_month: { title: "ROI by month", collapsed: true, render: () => roiMonth() },
+    roi_year: { title: "ROI by year", collapsed: true, render: () => roiYear() },
+    accounts: { title: "By buyer account", collapsed: true, render: () => byAccount() },
+  };
+  compute();
+  const board = await makeBoard("dashboard", ["overview", "monthly", "rank", "sales", "insights", "roi_month", "roi_year", "accounts"], sections);
+  function refresh() { if (ro) ro.disconnect(); compute(); board.rerender(); }
+
+  root.replaceChildren(
+    h("div", { class: "page-head" },
+      h("div", {}, h("h1", { text: "Sales" }), h("p", { class: "sub", text: `${fmtInt(all.length)} sales since you started. Click a section's title to open or close it. Drag the dots next to a title, or use the arrows, to rearrange.` })),
+      h("span", { class: "spacer" }),
+      h("button", { type: "button", onclick: () => board.open("sales") }, "Jump to sales"),
+      h("button", { type: "button", class: "ghost", onclick: () => board.reset() }, "Reset layout")),
+    h("div", { class: "toolbar" }, chips, moreBtn, clearBtn, activeNote),
+    more, board.el);
+
+  // ---------- Overview: the ticket stub + 4 numbers ----------
+  function overview() {
+    const t = D.t;
+    const val = h("div", { class: "value" });
+    const eye = h("button", { type: "button", class: "eye" });
     const paint = () => {
-      tagVal.textContent = state.tagVisible ? fmtMoney(t.profit) : "• • • • • •";
-      tagVal.className = `value num ${state.tagVisible ? signClass(t.profit) : ""}`;
-      eye.textContent = state.tagVisible ? "🙈 Hide" : "👁 Show";
+      val.textContent = state.tagVisible ? fmtMoney(t.profit) : "••••••";
+      val.className = `value ${state.tagVisible ? (t.profit < 0 ? "neg" : "") : "masked"}`;
+      eye.textContent = state.tagVisible ? "Hide" : "Show";
       eye.setAttribute("aria-pressed", String(state.tagVisible));
       eye.setAttribute("aria-label", state.tagVisible ? "Hide total profit" : "Show total profit");
     };
     eye.onclick = () => { state.tagVisible = !state.tagVisible; paint(); };
     paint();
-    const avgMonth = months.length ? t.profit / months.length : 0;
-    const tile = (label, value, foot, cls = "") => h("div", { class: "kpi" }, h("div", { class: "label", text: label }), h("div", { class: `value num ${cls}`, text: value }), foot ? h("div", { class: "foot", text: foot }) : null);
-    return h("div", { class: "grid kpis" },
-      h("div", { class: "kpi tag" }, h("div", { class: "label" }, "🏷 Total profit (your tag)", eye), tagVal,
-        h("div", { class: "foot", text: state.preset === "all" && !state.artist && !state.venue && !state.account ? "Since inception" : "For the current filters" })),
-      tile("Revenue", fmtMoney(t.revenue), `${fmtInt(t.n)} sales`),
-      tile("Cost", fmtMoney(t.cost), `${fmtInt(t.tickets)} tickets sold`),
-      tile("ROI", fmtPct(t.roi), "profit ÷ cost", signClass(t.roi)),
-      tile("Avg profit / sale", fmtMoney(t.n ? t.profit / t.n : 0), `${fmtMoney(t.tickets ? t.profit / t.tickets : 0)} per ticket`),
-      tile("Win rate", fmtPct(t.n ? (t.wins / t.n) * 100 : null, 0), `${fmtInt(t.losses)} sales at a loss`),
-      tile("Avg profit / month", fmtMoney(avgMonth), `${months.length} active months`));
+    const scope = state.preset === "all" && !state.artist && !state.venue && !state.account ? "Since you started" : "For the current filters";
+    const stat = (label, value, foot, cls = "") => h("div", { class: "stat" }, h("div", { class: "label", text: label }), h("div", { class: `value ${cls}`, text: value }), h("div", { class: "foot", text: foot }));
+    return h("div", { class: "headline" },
+      h("div", { class: "stub" },
+        h("div", { class: "main" }, h("div", { class: "label" }, "Your tag (total profit)", eye), val, h("div", { class: "note", text: scope })),
+        h("div", { class: "tear" }, h("div", { class: "t", text: "ROI" }), h("div", { class: "v", text: fmtPct(t.roi) }), h("div", { class: "t mt", text: "Sales" }), h("div", { class: "v", text: fmtInt(t.n) }))),
+      stat("Revenue", fmtMoney(t.revenue), `${fmtMoney(t.cost)} spent on tickets`),
+      stat("Return on investment", fmtPct(t.roi), "Profit for every $100 spent", signClass(t.roi)),
+      stat("Tickets sold", fmtInt(t.tickets), `${fmtMoney(t.tickets ? t.profit / t.tickets : 0)} profit per ticket`),
+      stat("Win rate", fmtPct(t.n ? (t.wins / t.n) * 100 : null, 0), t.losses ? `${fmtInt(t.losses)} sales lost money` : "No losing sales"));
   }
 
-  // ----- monthly grouped bar chart (revenue vs profit) -----
-  function chartCard(months, setRO) {
+  // ---------- chart ----------
+  function chart() {
+    const months = D.months;
     const wrap = h("div", { class: "chart" });
     const tip = h("div", { class: "tooltip hidden" });
     wrap.append(tip);
-    const renderChart = () => {
+    const draw = () => {
       [...wrap.querySelectorAll("svg")].forEach((n) => n.remove());
       const W = Math.max(320, wrap.clientWidth), H = 280, m = { t: 12, r: 8, b: 30, l: 56 };
       const iw = W - m.l - m.r, ih = H - m.t - m.b;
@@ -148,20 +169,18 @@ export async function renderDashboard(root) {
       const y = (v) => m.t + ih - ((v - minV) / (maxV - minV)) * ih;
       const band = iw / months.length, bw = Math.max(2, Math.min(22, (band - 6) / 2 - 1));
       const svg = s("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Monthly revenue and profit" });
-      const ticks = 4, step = niceStep((maxV - minV) / ticks);
+      const step = niceStep((maxV - minV) / 4);
       const g = s("g", { class: "axis" });
       for (let v = Math.ceil(minV / step) * step; v <= maxV + 0.001; v += step) {
-        g.append(s("line", { class: v === 0 ? "zero" : "grid-line", x1: m.l, x2: W - m.r, y1: y(v), y2: y(v) }));
+        g.append(s("line", { class: Math.abs(v) < 1e-9 ? "zero" : "grid-line", x1: m.l, x2: W - m.r, y1: y(v), y2: y(v) }));
         g.append(s("text", { x: m.l - 8, y: y(v) + 4, "text-anchor": "end" }, fmtMoneyShort(v)));
       }
-      if (minV < 0) g.append(s("line", { class: "zero", x1: m.l, x2: W - m.r, y1: y(0), y2: y(0) }));
-      const every = Math.ceil(months.length / Math.floor(iw / 52));
+      const every = Math.max(1, Math.ceil(months.length / Math.max(1, Math.floor(iw / 56))));
       months.forEach((d, i) => { if (i % every === 0) g.append(s("text", { x: m.l + band * i + band / 2, y: H - 10, "text-anchor": "middle" }, monthLabel(d.key))); });
       svg.append(g);
       const bar = (x, v, color) => {
         const y0 = y(0), y1 = y(v), top = Math.min(y0, y1), hgt = Math.max(1, Math.abs(y1 - y0));
         const r = Math.min(4, bw / 2, hgt);
-        // rounded at the data end, square at the baseline
         const p = v >= 0
           ? `M${x},${top + hgt} V${top + r} Q${x},${top} ${x + r},${top} H${x + bw - r} Q${x + bw},${top} ${x + bw},${top + r} V${top + hgt} Z`
           : `M${x},${top} V${top + hgt - r} Q${x},${top + hgt} ${x + r},${top + hgt} H${x + bw - r} Q${x + bw},${top + hgt} ${x + bw},${top + hgt - r} V${top} Z`;
@@ -172,7 +191,7 @@ export async function renderDashboard(root) {
         const grp = s("g", {});
         grp.append(bar(cx - bw - 1, d.revenue, "var(--series-1)"), bar(cx + 1, d.profit, d.profit < 0 ? "var(--bad)" : "var(--series-2)"));
         const hit = s("rect", { x: m.l + band * i, y: m.t, width: band, height: ih, fill: "transparent" });
-        hit.addEventListener("mouseenter", () => grp.setAttribute("opacity", "0.8"));
+        hit.addEventListener("mouseenter", () => grp.setAttribute("opacity", "0.75"));
         hit.addEventListener("mousemove", (e) => showTip(e, d));
         hit.addEventListener("mouseleave", () => { grp.removeAttribute("opacity"); tip.classList.add("hidden"); });
         svg.append(grp, hit);
@@ -182,142 +201,134 @@ export async function renderDashboard(root) {
     const showTip = (e, d) => {
       const row = (k, v, cls = "") => h("div", { class: "tt-row" }, h("span", { text: k }), h("b", { class: cls, text: v }));
       tip.replaceChildren(h("div", { class: "tt-title", text: monthLabel(d.key, true) }),
-        row("Revenue", fmtMoney(d.revenue)), row("Profit", fmtMoney(d.profit), signClass(d.profit)),
-        row("ROI", fmtPct(d.roi)), row("Sales", fmtInt(d.n)));
+        row("Revenue", fmtMoney(d.revenue)), row("Profit", fmtMoney(d.profit), signClass(d.profit)), row("ROI", fmtPct(d.roi)), row("Sales", fmtInt(d.n)));
       tip.classList.remove("hidden");
       const b = wrap.getBoundingClientRect();
-      let x = e.clientX - b.left + 14; if (x + 180 > b.width) x -= 200;
+      let x = e.clientX - b.left + 14; if (x + 190 > b.width) x -= 210;
       tip.style.left = `${x}px`; tip.style.top = `${Math.max(0, e.clientY - b.top - 40)}px`;
     };
-    const o = new ResizeObserver(() => renderChart()); o.observe(wrap); setRO(o);
-    return h("div", { class: "card" },
-      h("div", { class: "card-head" }, h("h2", { text: "Revenue & profit by month" }), h("span", { class: "spacer" }),
-        h("div", { class: "legend" }, h("span", {}, h("span", { class: "sw", style: { background: "var(--series-1)" } }), "Revenue"),
-          h("span", {}, h("span", { class: "sw", style: { background: "var(--series-2)" } }), "Profit"))),
-      wrap);
+    if (ro) ro.disconnect();
+    ro = new ResizeObserver(() => draw()); ro.observe(wrap);
+    return wrap;
   }
 
-  // ----- top / bottom ranking -----
-  function rankCard(title, groups) {
-    const metricKey = { profit: "profit", roi: "roi", sales: "n" };
-    const content = h("div", {});
-    const seg = h("div", { class: "seg", role: "group", "aria-label": "Rank by" });
-    const paint = () => {
-      const k = metricKey[state.rankMetric];
-      const pool = state.rankMetric === "roi" ? groups.filter((g) => g.n >= 2 && g.roi != null) : groups;
-      const sorted = [...pool].sort((a, b) => b[k] - a[k]);
-      const top = sorted.slice(0, 5), bottom = sorted.slice(-5).reverse().filter((g) => !top.includes(g));
-      const fmt = (g) => (k === "roi" ? fmtPct(g.roi) : k === "n" ? `${fmtInt(g.n)} sales` : fmtMoney(g.profit));
-      const maxAbs = Math.max(1, ...pool.map((g) => Math.abs(g[k] || 0)));
-      const list = (items) => h("ol", { class: "rank" }, items.map((g, i) => h("li", {},
-        h("span", { class: "n", text: i + 1 }),
-        h("div", { class: "name" }, h("div", { class: "name", title: g.key, text: g.key }),
-          h("div", { class: "meta", text: `${fmtInt(g.n)} sales · ${fmtMoney(g.profit)} profit · ${fmtPct(g.roi)} ROI` }),
-          h("div", { class: `bar ${g[k] < 0 ? "neg" : ""}`, style: { width: `${Math.max(2, (Math.abs(g[k] || 0) / maxAbs) * 100)}%` } })),
-        h("span", { class: `val ${k === "n" ? "" : signClass(g[k])}`, text: fmt(g) }))));
-      content.replaceChildren(...[
-        h("h3", { text: "Top 5" }), top.length ? list(top) : h("p", { class: "muted small", text: "Not enough data." }),
-        bottom.length ? h("h3", { class: "mt", text: "Bottom 5" }) : null, bottom.length ? list(bottom) : null,
-        state.rankMetric === "roi" ? h("p", { class: "muted small mt", text: "ROI ranking only counts items with 2+ sales." }) : null].filter(Boolean));
-      [...seg.children].forEach((b) => b.classList.toggle("on", b.dataset.m === state.rankMetric));
+  // ---------- best & worst ----------
+  function rankControls() {
+    const seg = (opts, key) => {
+      const g = h("div", { class: "chips", role: "group" });
+      opts.forEach(([v, t]) => g.append(h("button", { type: "button", class: state[key] === v ? "on" : "", text: t, onclick: () => { state[key] = v; board.rerender("rank"); } })));
+      return g;
     };
-    [["profit", "Profit"], ["roi", "ROI"], ["sales", "# Sales"]].forEach(([m, t]) =>
-      seg.append(h("button", { type: "button", "data-m": m, text: t, onclick: () => { state.rankMetric = m; draw(); } })));
-    paint();
-    return h("div", { class: "card" }, h("div", { class: "card-head" }, h("h2", { text: title }), h("span", { class: "spacer" }), seg), content);
+    return h("div", { class: "row" }, seg([["artist", "Artists"], ["venue", "Venues"]], "rankBy"), seg([["profit", "Profit"], ["roi", "ROI"], ["n", "Number of sales"]], "rankMetric"));
+  }
+  function ranking() {
+    const groups = state.rankBy === "artist" ? D.artists : D.venues;
+    const k = state.rankMetric;
+    const pool = k === "roi" ? groups.filter((g) => g.n >= 2 && g.roi != null) : groups;
+    const sorted = [...pool].sort((a, b) => (b[k] ?? -1e9) - (a[k] ?? -1e9));
+    const top = sorted.slice(0, 5), bottom = sorted.slice(-5).reverse().filter((g) => !top.includes(g));
+    const fmt = (g) => (k === "roi" ? fmtPct(g.roi) : k === "n" ? `${fmtInt(g.n)} sales` : fmtMoney(g.profit));
+    const maxAbs = Math.max(1, ...pool.map((g) => Math.abs(g[k] || 0)));
+    const list = (items) => h("ol", { class: "rank" }, items.map((g) => h("li", {},
+      h("div", { class: "name", title: g.key, text: g.key }),
+      h("span", { class: `val ${k === "n" ? "" : signClass(g[k])}`, text: fmt(g) }),
+      h("div", { class: "meta", text: `${fmtInt(g.n)} sales, ${fmtMoney(g.profit)} profit, ${fmtPct(g.roi)} ROI` }),
+      h("div", { class: "bar" }, h("i", { class: g[k] < 0 ? "neg" : "", style: { width: `${Math.max(2, (Math.abs(g[k] || 0) / maxAbs) * 100)}%` } })))));
+    return h("div", {},
+      h("div", { class: "split" },
+        h("div", {}, h("h3", { text: "Top 5" }), top.length ? list(top) : h("p", { class: "muted small", text: "Not enough sales yet." })),
+        h("div", {}, h("h3", { text: "Bottom 5" }), bottom.length ? list(bottom) : h("p", { class: "muted small", text: "Not enough different ones to compare yet." }))),
+      k === "roi" ? h("p", { class: "muted small mt", text: "ROI ranking only includes those with 2 or more sales." }) : "");
   }
 
-  // ----- auto insights: where you did right / wrong -----
-  function insightsCard(rows, t, months, years, artists, venues, accounts) {
+  // ---------- insights ----------
+  function insights() {
+    const { rows, t, months, years, artists, venues, accounts } = D;
     const out = [];
     const add = (kind, title, text) => out.push({ kind, title, text });
     const byP = (arr) => [...arr].sort((a, b) => b.profit - a.profit);
     if (months.length > 1) {
       const bm = byP(months)[0], wm = byP(months).at(-1);
-      add("good", "Best month", `${monthLabel(bm.key, true)}: ${fmtMoney(bm.profit)} profit on ${fmtInt(bm.n)} sales (${fmtPct(bm.roi)} ROI).`);
-      add(wm.profit < 0 ? "bad" : "", "Weakest month", `${monthLabel(wm.key, true)}: ${fmtMoney(wm.profit)} profit on ${fmtInt(wm.n)} sales.`);
+      add("good", "Best month", `${monthLabel(bm.key, true)} made ${fmtMoney(bm.profit)} on ${fmtInt(bm.n)} sales (${fmtPct(bm.roi)} ROI).`);
+      add(wm.profit < 0 ? "bad" : "", "Weakest month", `${monthLabel(wm.key, true)} made ${fmtMoney(wm.profit)} on ${fmtInt(wm.n)} sales.`);
     }
     if (artists.length) {
       const ba = byP(artists)[0];
       add("good", "Biggest earner", `${ba.key} made you ${fmtMoney(ba.profit)} across ${fmtInt(ba.n)} sales (${fmtPct(ba.roi)} ROI).`);
       const losers = artists.filter((a) => a.profit < 0).sort((a, b) => a.profit - b.profit);
-      if (losers.length) add("bad", "Biggest money-loser", `${losers[0].key} lost ${fmtMoney(-losers[0].profit)} over ${fmtInt(losers[0].n)} sales. ${losers.length > 1 ? `${losers.length} artists/events are net negative overall.` : ""}`);
+      if (losers.length) add("bad", "Biggest money-loser", `${losers[0].key} lost ${fmtMoney(-losers[0].profit)} over ${fmtInt(losers[0].n)} sales.${losers.length > 1 ? ` ${losers.length} artists or events lost money overall.` : ""}`);
     }
-    if (t.losses) add("bad", "Losing sales", `${fmtPct((t.losses / t.n) * 100, 0)} of sales lost money: ${fmtMoney(-t.lossAmt)} total. Without them, profit would be ${fmtMoney(t.profit - t.lossAmt)}.`);
-    // timing: how far before the event you sold
-    const timed = rows.filter((r) => r.event_date && r.sold_date && r.total_cost > 0);
+    if (t.losses) add("bad", "Losing sales", `${fmtPct((t.losses / t.n) * 100, 0)} of sales lost money, ${fmtMoney(-t.lossAmt)} in total. Without them, profit would be ${fmtMoney(t.profit - t.lossAmt)}.`);
+    const timed = rows.filter((r) => r.event_date && r.sold_date && num(r.total_cost) > 0);
     if (timed.length >= 5) {
-      const buckets = [["30+ days before the event", (d) => d >= 30], ["8–29 days before", (d) => d >= 8 && d < 30], ["Last week (0–7 days)", (d) => d >= 0 && d < 8]];
+      const buckets = [["30+ days before the show", (d) => d >= 30], ["8 to 29 days before", (d) => d >= 8 && d < 30], ["in the final week", (d) => d >= 0 && d < 8]];
       const res = buckets.map(([name, f]) => ({ name, ...agg(timed.filter((r) => f(daysBetween(r.sold_date, r.event_date)))) })).filter((b) => b.n >= 2);
       if (res.length >= 2) {
         const best = [...res].sort((a, b) => b.roi - a.roi)[0], worst = [...res].sort((a, b) => a.roi - b.roi)[0];
-        add("", "Timing", `Sales ${best.name.toLowerCase()} averaged ${fmtPct(best.roi)} ROI vs ${fmtPct(worst.roi)} when sold ${worst.name.toLowerCase().replace(/^last/, "in the last")}.`);
+        add("", "When to sell", `Selling ${best.name} averaged ${fmtPct(best.roi)} ROI, compared with ${fmtPct(worst.roi)} when selling ${worst.name}.`);
       }
     }
     const held = rows.filter((r) => r.purchase_date && r.sold_date).map((r) => daysBetween(r.purchase_date, r.sold_date)).filter((d) => d >= 0);
-    if (held.length >= 3) add("", "Holding time", `On average you hold tickets ${Math.round(held.reduce((a, b) => a + b, 0) / held.length)} days between buying and selling.`);
-    // price sweet spot
+    if (held.length >= 3) add("", "How long you hold", `On average you sell tickets ${Math.round(held.reduce((a, b) => a + b, 0) / held.length)} days after buying them.`);
     const priced = rows.filter((r) => num(r.cost_per) > 0);
     if (priced.length >= 6) {
-      const tiers = [["under $100", 0, 100], ["$100–$249", 100, 250], ["$250–$499", 250, 500], ["$500+", 500, 1e12]];
-      const res = tiers.map(([n, lo, hi]) => ({ n2: n, ...agg(priced.filter((r) => num(r.cost_per) >= lo && num(r.cost_per) < hi)) })).filter((x) => x.n >= 2);
-      if (res.length >= 2) {
-        const b = [...res].sort((a, c) => c.roi - a.roi)[0];
-        add("good", "Price sweet spot", `Tickets bought at ${b.n2} each gave your best ROI: ${fmtPct(b.roi)} on ${fmtInt(b.n)} sales.`);
-      }
+      const tiers = [["under $100", 0, 100], ["$100 to $249", 100, 250], ["$250 to $499", 250, 500], ["$500 or more", 500, 1e12]];
+      const res = tiers.map(([n, lo, hi]) => ({ label: n, ...agg(priced.filter((r) => num(r.cost_per) >= lo && num(r.cost_per) < hi)) })).filter((x) => x.n >= 2);
+      if (res.length >= 2) { const b = [...res].sort((a, c) => c.roi - a.roi)[0]; add("good", "Price sweet spot", `Tickets that cost ${b.label} each gave your best ROI: ${fmtPct(b.roi)} on ${fmtInt(b.n)} sales.`); }
     }
-    const goodVenues = venues.filter((v) => v.n >= 3).sort((a, b) => b.roi - a.roi);
-    if (goodVenues.length >= 2) {
-      add("good", "Best venue (3+ sales)", `${goodVenues[0].key}: ${fmtPct(goodVenues[0].roi)} ROI across ${fmtInt(goodVenues[0].n)} sales.`);
-      const wv = goodVenues.at(-1); if (wv.roi < 10) add("bad", "Weakest venue (3+ sales)", `${wv.key}: ${fmtPct(wv.roi)} ROI across ${fmtInt(wv.n)} sales.`);
+    const vv = venues.filter((v) => v.n >= 3).sort((a, b) => b.roi - a.roi);
+    if (vv.length >= 2) {
+      add("good", "Best venue", `${vv[0].key}: ${fmtPct(vv[0].roi)} ROI over ${fmtInt(vv[0].n)} sales.`);
+      const wv = vv.at(-1); if (wv.roi < 10) add("bad", "Weakest venue", `${wv.key}: ${fmtPct(wv.roi)} ROI over ${fmtInt(wv.n)} sales.`);
     }
     if (accounts.length > 1) { const a = byP(accounts)[0]; add("", "Top buyer account", `${a.key} produced ${fmtMoney(a.profit)} profit (${fmtPct(a.roi)} ROI).`); }
     if (years.length > 1) {
       const [cur, prev] = years; const ch = prev.profit ? ((cur.profit - prev.profit) / Math.abs(prev.profit)) * 100 : null;
-      add(ch >= 0 ? "good" : "bad", `${cur.key} vs ${prev.key}`, `${fmtMoney(cur.profit)} vs ${fmtMoney(prev.profit)} profit${ch != null ? ` (${ch >= 0 ? "+" : ""}${ch.toFixed(0)}%)` : ""}.${new Date().getFullYear() == cur.key ? " This year isn't finished yet." : ""}`);
+      add(ch >= 0 ? "good" : "bad", `${cur.key} compared with ${prev.key}`, `${fmtMoney(cur.profit)} profit versus ${fmtMoney(prev.profit)}${ch != null ? ` (${ch >= 0 ? "up" : "down"} ${Math.abs(ch).toFixed(0)}%)` : ""}.${String(new Date().getFullYear()) === cur.key ? " This year isn't over yet." : ""}`);
     }
-    return h("div", { class: "card" }, h("div", { class: "card-head" }, h("h2", { text: "What's working, what isn't" })),
-      out.length ? h("div", { class: "insights" }, out.map((i) => h("div", { class: `insight ${i.kind}` }, h("div", { class: "t", text: i.title }), h("div", { class: "b", text: i.text }))))
-        : h("p", { class: "muted", text: "Insights appear once there are a few more sales." }));
+    if (!out.length) return h("p", { class: "muted", text: "These appear once you have a few more sales." });
+    const icon = { good: "✓", bad: "!", "": "i" };
+    return h("div", { class: "insights" }, out.map((i) => h("div", { class: `insight ${i.kind}` }, h("span", { class: "ic", "aria-hidden": "true", text: icon[i.kind] }), h("div", { class: "t", text: i.title }), h("div", { class: "b", text: i.text }))));
   }
 
-  function roiMonthCard(months) {
-    return h("div", { class: "card" }, h("div", { class: "card-head" }, h("h2", { text: "ROI by month" })),
-      miniTable(["Month", "Sales", "Revenue", "Profit", "ROI"], [...months].reverse().map((m) => [monthLabel(m.key, true), fmtInt(m.n), fmtMoney(m.revenue), [fmtMoney(m.profit), signClass(m.profit)], [fmtPct(m.roi), signClass(m.roi)]])));
+  // ---------- ROI tables ----------
+  const roiRows = (list) => list.map((m) => [m.label, fmtInt(m.n), fmtMoney(m.revenue), [fmtMoney(m.profit), signClass(m.profit)], [fmtPct(m.roi), signClass(m.roi)]]);
+  function roiMonth() {
+    if (!D.months.length) return noRows();
+    return miniTable(["Month", "Sales", "Revenue", "Profit", "ROI"], roiRows([...D.months].reverse().map((m) => ({ ...m, label: monthLabel(m.key, true) }))));
   }
-  function roiYearCard(years, accounts) {
-    return h("div", { class: "card" },
-      h("div", { class: "card-head" }, h("h2", { text: "ROI by year" })),
-      miniTable(["Year", "Sales", "Revenue", "Profit", "ROI"], years.map((y) => [y.key, fmtInt(y.n), fmtMoney(y.revenue), [fmtMoney(y.profit), signClass(y.profit)], [fmtPct(y.roi), signClass(y.roi)]])),
-      accounts.length ? h("div", { class: "card-head mt" }, h("h2", { text: "By buyer account" })) : null,
-      accounts.length ? miniTable(["Account", "Sales", "Profit", "ROI"], [...accounts].sort((a, b) => b.profit - a.profit).map((a) => [a.key, fmtInt(a.n), [fmtMoney(a.profit), signClass(a.profit)], [fmtPct(a.roi), signClass(a.roi)]])) : null);
+  function roiYear() {
+    if (!D.years.length) return noRows();
+    return miniTable(["Year", "Sales", "Revenue", "Profit", "ROI"], roiRows(D.years.map((y) => ({ ...y, label: y.key }))));
+  }
+  function byAccount() {
+    if (!D.accounts.length) return h("p", { class: "muted", text: "No buyer accounts recorded yet." });
+    return miniTable(["Account", "Sales", "Revenue", "Profit", "ROI"], roiRows([...D.accounts].sort((a, b) => b.profit - a.profit).map((a) => ({ ...a, label: a.key }))));
   }
   function miniTable(heads, rows) {
     return h("div", { class: "table-wrap" }, h("table", {},
       h("thead", {}, h("tr", {}, heads.map((t, i) => h("th", { class: i ? "r" : "", text: t })))),
-      h("tbody", {}, rows.map((r) => h("tr", {}, r.map((c, i) => { const [v, cls] = Array.isArray(c) ? c : [c, ""]; return h("td", { class: `${i ? "r num" : ""} ${cls}`, text: v }); }))))));
+      h("tbody", {}, rows.map((r) => h("tr", {}, r.map((c, i) => { const [v, cls] = Array.isArray(c) ? c : [c, ""]; return h("td", { class: `${i ? "r num" : "strong"} ${cls}`, text: v }); }))))));
   }
 
-  // ----- the sales table (same columns as your ticket sales sheet) -----
-  function salesTable(rows) {
+  // ---------- the sales table ----------
+  function salesTable() {
     const cols = [
       ["artist", "Artist", "t"], ["event_date", "Date", "d"], ["venue", "Venue", "t"], ["quantity", "Tickets", "n"],
-      ["total_sale", "Total", "m"], ["profit", "Profit", "m"], ["roi", "ROI", "p"], ["cost_per", "Cost Per", "m"],
-      ["sold_per", "Sold Per", "m"], ["sold_date", "Sold", "d"], ["account", "Account", "t"]];
-    let sortKey = "sold_date", dir = -1, page = 0, q = "";
-    const per = 50;
+      ["total_sale", "Total", "m"], ["profit", "Profit", "m"], ["roi", "ROI", "p"], ["cost_per", "Cost per", "m"],
+      ["sold_per", "Sold per", "m"], ["sold_date", "Sold", "d"], ["marketplace", "Sold on", "t"], ["account", "Account", "t"]];
+    const per = 25;
+    const rows = D.rows;
     const tbody = h("tbody"), thead = h("thead"), pager = h("div", { class: "pager" });
-    const search = h("input", { type: "search", placeholder: "Search sales…", class: "grow", "aria-label": "Search sales" });
-    search.oninput = () => { q = search.value.toLowerCase(); page = 0; paint(); };
-    const exportBtn = h("button", { type: "button" }, "⬇ Export CSV");
-    exportBtn.onclick = () => exportCsv(cols, current());
+    const search = h("input", { type: "search", placeholder: "Search by artist, venue, account or order #", "aria-label": "Search sales", value: tQ });
+    search.oninput = () => { tQ = search.value.toLowerCase(); tPage = 0; paint(); };
     const current = () => {
-      const list = q ? rows.filter((r) => [r.artist, r.venue, r.account, r.order_number, r.section].some((v) => (v || "").toLowerCase().includes(q))) : rows;
+      const list = tQ ? rows.filter((r) => [r.artist, r.venue, r.account, r.order_number, r.section, r.marketplace].some((v) => (v || "").toLowerCase().includes(tQ))) : rows;
+      const numeric = ["m", "p", "n"].includes(cols.find((c) => c[0] === tSort)[2]);
       return [...list].sort((a, b) => {
-        const x = a[sortKey], y = b[sortKey];
+        const x = a[tSort], y = b[tSort];
         if (x == null && y == null) return 0; if (x == null) return 1; if (y == null) return -1;
-        const numeric = ["m", "p", "n"].includes(cols.find((c) => c[0] === sortKey)[2]);
-        return (numeric ? Number(x) - Number(y) : String(x).localeCompare(String(y))) * dir;
+        return (numeric ? Number(x) - Number(y) : String(x).localeCompare(String(y))) * tDir;
       });
     };
     const cell = (r, [k, , t]) => {
@@ -326,40 +337,37 @@ export async function renderDashboard(root) {
       if (t === "p") return h("td", { class: `r num ${signClass(Number(v))}`, text: fmtPct(v == null ? null : Number(v)) });
       if (t === "n") return h("td", { class: "r num", text: v ?? "—" });
       if (t === "d") return h("td", { class: "num", text: fmtDate(v) });
-      return h("td", { text: v || "—", title: v || "" });
+      return h("td", { class: k === "artist" ? "strong" : "", text: v || "—", title: v || "" });
     };
     function paint() {
       thead.replaceChildren(h("tr", {}, cols.map(([k, label, t]) => {
-        const th = h("th", { class: ["m", "p", "n"].includes(t) ? "r" : "", scope: "col", tabindex: "0" }, label, sortKey === k ? h("span", { class: "arrow", text: dir > 0 ? " ▲" : " ▼" }) : null);
-        const go = () => { if (sortKey === k) dir = -dir; else { sortKey = k; dir = t === "t" ? 1 : -1; } paint(); };
+        const th = h("th", { class: ["m", "p", "n"].includes(t) ? "r" : "", scope: "col", tabindex: "0", "aria-sort": tSort === k ? (tDir > 0 ? "ascending" : "descending") : "none" },
+          label, tSort === k ? h("span", { class: "arrow", text: tDir > 0 ? " ▲" : " ▼" }) : null);
+        const go = () => { if (tSort === k) tDir = -tDir; else { tSort = k; tDir = t === "t" ? 1 : -1; } paint(); };
         th.onclick = go; th.onkeydown = (e) => { if (e.key === "Enter") go(); };
         return th;
       })));
       const list = current(), pages = Math.max(1, Math.ceil(list.length / per));
-      page = Math.min(page, pages - 1);
-      tbody.replaceChildren(...list.slice(page * per, page * per + per).map((r) => h("tr", {}, cols.map((c) => cell(r, c)))));
-      pager.replaceChildren(h("span", { text: `${fmtInt(list.length)} sales · page ${page + 1} of ${pages}` }),
-        h("button", { class: "icon", disabled: page === 0, onclick: () => { page--; paint(); } }, "‹ Prev"),
-        h("button", { class: "icon", disabled: page >= pages - 1, onclick: () => { page++; paint(); } }, "Next ›"));
+      tPage = Math.min(tPage, pages - 1);
+      tbody.replaceChildren(...list.slice(tPage * per, tPage * per + per).map((r) => h("tr", {}, cols.map((c) => cell(r, c)))));
+      pager.replaceChildren(h("span", { text: `${fmtInt(list.length)} sales, page ${tPage + 1} of ${pages}` }),
+        h("button", { class: "icon", disabled: tPage === 0, onclick: () => { tPage--; paint(); } }, "Previous"),
+        h("button", { class: "icon", disabled: tPage >= pages - 1, onclick: () => { tPage++; paint(); } }, "Next"));
     }
     paint();
-    return h("div", { class: "card" }, h("div", { class: "card-head" }, h("h2", { text: "All sales" }), h("span", { class: "spacer" }), search, exportBtn),
-      h("div", { class: "table-wrap" }, h("table", {}, thead, tbody)), pager);
+    return h("div", {},
+      h("div", { class: "row" }, h("div", { class: "grow" }, search), h("button", { type: "button", onclick: () => exportCsv(cols, current()) }, "Download CSV")),
+      h("div", { class: "table-wrap mt" }, h("table", {}, thead, tbody)), pager);
   }
 
-  // ----- wire filters -----
-  const sync = () => {
-    if (state.preset !== "custom") { [state.from, state.to] = presetRange(state.preset); fromIn.value = state.from; toIn.value = state.to; }
-    draw();
-  };
-  presetSel.onchange = () => { state.preset = presetSel.value; sync(); };
-  fromIn.onchange = () => { state.preset = "custom"; presetSel.value = "custom"; state.from = fromIn.value; draw(); };
-  toIn.onchange = () => { state.preset = "custom"; presetSel.value = "custom"; state.to = toIn.value; draw(); };
-  artistIn.onchange = () => { state.artist = artistIn.value.trim(); draw(); };
-  venueIn.onchange = () => { state.venue = venueIn.value.trim(); draw(); };
-  acctSel.onchange = () => { state.account = acctSel.value; draw(); };
-  clearBtn.onclick = () => { Object.assign(state, { preset: "all", from: "", to: "", artist: "", venue: "", account: "" }); presetSel.value = "all"; fromIn.value = toIn.value = artistIn.value = venueIn.value = acctSel.value = ""; draw(); };
-  draw();
+  // ---------- filter wiring ----------
+  const setCustom = () => { state.preset = "custom"; paintChips(); };
+  fromIn.onchange = () => { setCustom(); state.from = fromIn.value; refresh(); };
+  toIn.onchange = () => { setCustom(); state.to = toIn.value; refresh(); };
+  artistIn.onchange = () => { state.artist = artistIn.value.trim(); refresh(); };
+  venueIn.onchange = () => { state.venue = venueIn.value.trim(); refresh(); };
+  acctSel.onchange = () => { state.account = acctSel.value; refresh(); };
+
   return () => ro && ro.disconnect();
 }
 
@@ -371,7 +379,6 @@ function niceStep(raw) {
 
 export function exportCsv(cols, rows, name = "sales") {
   const esc = (v) => { const t = v == null ? "" : String(v); return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
-  // guard against spreadsheet formula injection
   const safe = (v) => (typeof v === "string" && isNaN(Number(v)) && /^[=+\-@]/.test(v) ? `'${v}` : v);
   const csv = [cols.map((c) => c[1]).join(","), ...rows.map((r) => cols.map(([k]) => esc(safe(r[k]))).join(","))].join("\n");
   const a = document.createElement("a");
