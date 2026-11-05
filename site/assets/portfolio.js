@@ -36,7 +36,7 @@ function resultOf(r) {
   return r.roi != null && r.roi < 15 ? "ehh" : "win";
 }
 const RESULT_LABEL = { win: ["Profitable", "good"], ehh: ["Ehh", "meh"], even: ["Break-even", ""], loss: ["Loss", "bad"] };
-const badge = (r) => { const [t, c] = RESULT_LABEL[r.res]; return h("span", { class: `pill ${c}`, text: t }); };
+const badge = (r) => { const [t, c] = RESULT_LABEL[r.res]; const own = (r.result || "").replace(/\s*sale$/i, "").trim(); return h("span", { class: `pill ${c}`, text: own || t }); };
 
 function sectionLevel(sec) {
   if (!sec) return "Unknown";
