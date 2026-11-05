@@ -2,9 +2,10 @@
 import { sb, h, fetchAll, fmtMoney, fmtInt, fmtPct, fmtDate, monthLabel, todayISO } from "./common.js";
 import { barChart, lineChart, legend } from "./charts.js";
 import { exportCsv } from "./dashboard.js";
+import { loadPrefs, savePrefs } from "./layout.js";
 
 const COLS = "id,order_number,artist,venue,city,event_date,section,row_name,quantity,total_sale,total_cost,profit,roi,cost_per,sold_per,purchase_date,purchased_at,sold_date,sold_at,account,marketplace,result,created_at";
-const TABS = [["overview", "Overview"], ["monthly", "Monthly"], ["sales", "Sales data"], ["artists", "Artists"], ["venues", "Venues"], ["buying", "Buy timing"], ["losses", "Losses"], ["insights", "Buy insights"]];
+const TABS = [["tag", "TAG & Commission"], ["overview", "Overview"], ["monthly", "Monthly"], ["sales", "Sales data"], ["artists", "Artists"], ["venues", "Venues"], ["buying", "Buy timing"], ["losses", "Losses"], ["insights", "Buy insights"]];
 const NY = "America/New_York";
 const nyDay = new Intl.DateTimeFormat("en-CA", { timeZone: NY, year: "numeric", month: "2-digit", day: "2-digit" });
 const nyWeekday = new Intl.DateTimeFormat("en-US", { timeZone: NY, weekday: "short" });
@@ -25,18 +26,18 @@ const daysInMonth = (key) => { const [y, m] = key.split("-").map(Number); return
 const prevMonthKey = (key) => { const [y, m] = key.split("-").map(Number); const d = new Date(y, m - 2, 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; };
 
 /* ---------- result type (from the Discord post, with a fallback) ---------- */
+// Win / loss / break-even is decided by the actual profit (same as your TAG math).
+// "ehh" marks small wins, using the Discord label when there is one.
 function resultOf(r) {
+  const p = Math.round(r.profit * 100);
+  if (p < 0) return "loss";
+  if (p === 0) return "even";
   const t = (r.result || "").toLowerCase();
-  if (/loss/.test(t)) return "loss";
-  if (/ehh|meh/.test(t)) return "ehh";
-  if (/break/.test(t)) return "even";
-  if (t) return r.profit < 0 ? "loss" : "win";
-  if (r.profit < 0) return "loss";
-  if (r.profit === 0) return "even";
+  if (t) return /ehh|meh|break/.test(t) ? "ehh" : "win";
   return r.roi != null && r.roi < 15 ? "ehh" : "win";
 }
 const RESULT_LABEL = { win: ["Profitable", "good"], ehh: ["Ehh", "meh"], even: ["Break-even", ""], loss: ["Loss", "bad"] };
-const badge = (r) => { const [t, c] = RESULT_LABEL[r.res]; const own = (r.result || "").replace(/\s*sale$/i, "").trim(); return h("span", { class: `pill ${c}`, text: own || t }); };
+const badge = (r) => { const [t, c] = RESULT_LABEL[r.res]; const own = (r.result || "").replace(/\s*sale$/i, "").trim(); const useOwn = own && !(r.res === "even" && /loss/i.test(own)); return h("span", { class: `pill ${c}`, text: useOwn ? own : t }); };
 
 function sectionLevel(sec) {
   if (!sec) return "Unknown";
@@ -68,10 +69,12 @@ function agg(rows) {
   const a = { n: rows.length, revenue: 0, cost: 0, profit: 0, tickets: 0, wins: 0, losses: 0, lossAmt: 0, ehh: 0, even: 0 };
   for (const r of rows) {
     a.revenue += r.total_sale; a.cost += r.total_cost; a.profit += r.profit; a.tickets += r.quantity;
-    if (r.res === "loss") { a.losses++; a.lossAmt += r.profit; } else if (r.res === "ehh") a.ehh++; else if (r.res === "even") a.even++;
-    if (r.profit > 0) a.wins++;
+    const c = Math.round(r.profit * 100);
+    if (c < 0) { a.losses++; a.lossAmt += r.profit; } else if (c === 0) a.even++; else a.wins++;
+    if (r.res === "ehh") a.ehh++;
   }
   a.roi = a.cost > 0 ? (a.profit / a.cost) * 100 : null;
+  a.margin = a.revenue > 0 ? (a.profit / a.revenue) * 100 : null;
   a.winRate = a.n ? (a.wins / a.n) * 100 : null;
   const t = rows.map((r) => r.tts).filter((v) => v != null); a.tts = avg(t);
   a.last = rows.reduce((m, r) => Math.max(m, r.ts), 0);
@@ -86,7 +89,7 @@ function groupBy(rows, keyFn) {
 /* ---------- module state (kept while you move between tabs) ---------- */
 let ALL = null, rootEl = null, routeArgs = [];
 const F = { preset: "all", from: "", to: "", artist: "", venue: "", account: "", result: "", q: "" };
-const UI = { tagVisible: false, bestPer: "month", trendBy: "week", salesSort: ["ts", -1], salesPage: 0, entSort: ["profit", -1], entQ: "", month: null, entityFilter: "", scoreSort: ["score", -1] };
+const UI = { commission: 20, tagMonth: null, tagVisible: false, bestPer: "month", trendBy: "week", salesSort: ["ts", -1], salesPage: 0, entSort: ["profit", -1], entQ: "", month: null, entityFilter: "", scoreSort: ["score", -1] };
 
 export function onNewSale(r) {
   if (!ALL) return;
@@ -108,16 +111,27 @@ const filtered = () => ALL.filter((r) => {
   if (F.artist && r.artist !== F.artist) return false;
   if (F.venue && r.venue !== F.venue) return false;
   if (F.account && r.account !== F.account) return false;
-  if (F.result && r.res !== F.result) return false;
+  if (F.result && !(F.result === "win" ? r.profit > 0 && Math.round(r.profit * 100) > 0 : r.res === F.result)) return false;
   if (F.q) { const q = F.q.toLowerCase(); if (![r.artist, r.venue, r.city, r.account, r.order_number, r.section, r.marketplace].some((v) => (v || "").toLowerCase().includes(q))) return false; }
   return true;
 });
 
+let loadedAt = 0;
+async function loadAll() { ALL = (await fetchAll("sales", COLS, "created_at")).map(norm); loadedAt = Date.now(); }
 export async function renderPortfolio(root, args) {
   rootEl = root; routeArgs = args || [];
-  if (!ALL) ALL = (await fetchAll("sales", COLS, "created_at")).map(norm);
+  if (!ALL || Date.now() - loadedAt > 60000) {
+    const [, prefs] = await Promise.all([loadAll(), loadPrefs()]);
+    if (prefs && prefs.commission != null) UI.commission = Number(prefs.commission);
+  }
   paint();
 }
+// When you come back to the hub, quietly reload so numbers always match the database.
+addEventListener("visibilitychange", async () => {
+  if (document.visibilityState !== "visible" || !ALL || Date.now() - loadedAt < 60000) return;
+  await loadAll();
+  if (rootEl && rootEl.isConnected && (location.hash.startsWith("#p") || location.hash === "")) paint();
+});
 
 /* =========================================================
    Page frame: filters, KPIs, tabs
@@ -135,9 +149,9 @@ function paint() {
   const isEntity = tab === "artist" || tab === "venue";
   const rows = filtered();
   const t = agg(rows);
-  const view = isEntity ? entityView(tab, name) : (TABVIEWS[tab] || TABVIEWS.overview)(rows, t);
+  const view = isEntity ? entityView(tab, name) : (TABVIEWS[tab] || TABVIEWS.tag)(rows, t);
   if (isEntity) root.replaceChildren(tabsBar("", t), view);
-  else root.replaceChildren(filterBar(), kpiRow(t, rows), tabsBar(tab || "overview", t), view);
+  else root.replaceChildren(filterBar(), kpiRow(t, rows), tabsBar(TABVIEWS[tab] ? tab : "tag", t), view);
 }
 
 function filterBar() {
@@ -165,7 +179,7 @@ function filterBar() {
       sel("f-artist", "Artist / event", "artist", uniq("artist"), "All artists"),
       sel("f-venue", "Venue", "venue", uniq("venue"), "All venues"),
       sel("f-acct", "Buyer account", "account", uniq("account"), "All accounts"),
-      sel("f-res", "Result", "result", [["win", "Profitable"], ["ehh", "Ehh (small profit)"], ["even", "Break-even"], ["loss", "Losses"]], "Wins and losses"),
+      sel("f-res", "Result", "result", [["win", "All profitable"], ["ehh", "Ehh (small profit)"], ["even", "Break-even ($0)"], ["loss", "Losses"]], "Wins and losses"),
       h("div", { class: "f" }, h("label", { for: "f-q", text: "Search" }), q)),
     h("div", { class: "presets" },
       presets.map(([k, label]) => h("button", { type: "button", class: `preset ${F.preset === k ? "on" : ""}`, text: label, onclick: () => { F.preset = k; [F.from, F.to] = presetRange(k); paint(); } })),
@@ -174,16 +188,20 @@ function filterBar() {
 
 function kpiRow(t) {
   const eye = h("button", { type: "button", class: "eye", text: UI.tagVisible ? "Hide" : "Show", "aria-pressed": String(UI.tagVisible), onclick: () => { UI.tagVisible = !UI.tagVisible; paint(); } });
-  const kpi = (label, value, foot, c = "", extra = null, tag = false) => h("div", { class: `kpi ${tag ? "tag" : ""}` }, h("div", { class: "lbl", text: label }), extra, h("div", { class: `v ${c}`, text: value }), h("div", { class: "f", text: foot }));
-  return h("div", { class: "kpis" },
-    h("div", { class: "kpi tag" }, h("div", { class: "lbl", text: "Total profit" }), eye,
-      h("div", { class: `v ${UI.tagVisible ? cls(t.profit) : "masked"}`, text: UI.tagVisible ? sm(t.profit) : "••••••" }),
-      h("div", { class: "f", text: t.losses ? `${plural(t.losses, "loss")}, ${sm(t.lossAmt)}` : "No losses" })),
-    kpi("Total revenue", money(t.revenue), `Cost ${money(t.cost)}`),
-    kpi("Average ROI", sp(t.roi), `Avg ${sm(t.n ? t.profit / t.n : 0)} per sale`, cls(t.roi)),
-    kpi("Tickets sold", fmtInt(t.tickets), `Avg ${sm(t.tickets ? t.profit / t.tickets : 0)} per ticket`),
-    kpi("Sales", fmtInt(t.n), `${fmtInt(t.wins)} profit · ${fmtInt(t.losses)} loss`));
+  const kpi = (label, value, foot, c = "") => h("div", { class: "kpi" }, h("div", { class: "lbl", text: label }), h("div", { class: `v ${c}`, text: value }), h("div", { class: "f", text: foot }));
+  const comm = commissionOf(t.profit);
+  const masked = (v, c) => h("div", { class: `v ${UI.tagVisible ? c : "masked"}`, text: UI.tagVisible ? v : "••••••" });
+  return h("div", { class: "kpis six" },
+    h("div", { class: "kpi tag" }, h("div", { class: "lbl", text: "TAG (net profit)" }), eye, masked(sm(t.profit), cls(t.profit)),
+      h("div", { class: "f", text: t.losses ? `After ${sm(t.lossAmt)} in losses` : "No losses" })),
+    h("div", { class: "kpi tag" }, h("div", { class: "lbl", text: `Commission (${UI.commission}%)` }), masked(money(comm), ""),
+      h("div", { class: "f", text: UI.tagVisible ? `After commission ${sm(t.profit - comm)}` : "Tap Show on TAG" })),
+    kpi("Gross sales", money(t.revenue), `Cost ${money(t.cost)}`),
+    kpi("Weighted ROI", sp(t.roi), `Margin ${sp(t.margin)}`, cls(t.roi)),
+    kpi("Tickets", fmtInt(t.tickets), `${sm(t.tickets ? t.profit / t.tickets : 0)} per ticket`),
+    kpi("Sales", fmtInt(t.n), `${fmtInt(t.wins)} win · ${fmtInt(t.losses)} loss · ${fmtInt(t.even)} even`));
 }
+const commissionOf = (profit) => Math.max(0, profit) * (UI.commission / 100);
 
 function tabsBar(active, t) {
   return h("nav", { class: "tabs", "aria-label": "Portfolio views" },
@@ -224,6 +242,7 @@ function sortRows(rows, [key, dir], getter) {
    Tabs
    ========================================================= */
 const TABVIEWS = {
+  tag: () => tagView(),
   overview(rows) {
     if (!rows.length) return card("Overview", empty("No sales match these filters."));
     const months = groupBy(rows, (r) => r.month).sort((a, b) => a.key.localeCompare(b.key));
@@ -268,7 +287,7 @@ const TABVIEWS = {
     if (!UI.month || !months.includes(UI.month)) UI.month = months.includes(curKey) ? curKey : months[0];
     const key = UI.month, prevKey = prevMonthKey(key);
     // the month view ignores the date filter but respects the other filters
-    const pool = ALL.filter((r) => (!F.artist || r.artist === F.artist) && (!F.venue || r.venue === F.venue) && (!F.account || r.account === F.account) && (!F.result || r.res === F.result));
+    const pool = ALL.filter((r) => (!F.artist || r.artist === F.artist) && (!F.venue || r.venue === F.venue) && (!F.account || r.account === F.account) && (!F.result || (F.result === "win" ? Math.round(r.profit * 100) > 0 : r.res === F.result)));
     const mRows = pool.filter((r) => r.month === key), pRows = pool.filter((r) => r.month === prevKey);
     const isCurrent = key === curKey, dim = daysInMonth(key), dayNow = isCurrent ? Number(todayISO().slice(8)) : dim;
     const pSame = pRows.filter((r) => Number(r.day.slice(8)) <= dayNow);
@@ -375,7 +394,7 @@ const TABVIEWS = {
   },
 
   losses(rows) {
-    const losers = rows.filter((r) => r.res === "loss").sort((a, b) => a.profit - b.profit);
+    const losers = rows.filter((r) => Math.round(r.profit * 100) < 0).sort((a, b) => a.profit - b.profit);
     const ehh = rows.filter((r) => r.res === "ehh" || r.res === "even");
     const lost = losers.reduce((a, r) => a + r.profit, 0);
     const kpi = (label, value, foot, c = "") => h("div", { class: "kpi" }, h("div", { class: "lbl", text: label }), h("div", { class: `v ${c}`, text: value }), h("div", { class: "f", text: foot }));
@@ -580,4 +599,71 @@ function calculator() {
   [cost, qty, fee, target].forEach((el) => (el.oninput = calc));
   calc();
   return card("Price calculator", h("div", {}, h("div", { class: "calc" }, costF, qtyF, feeF, targetF), out), null, "Use before buying to check the listing price you'd need. If your payouts are already after fees, leave the fee at 0.");
+}
+
+/* ---------- TAG & commission ---------- */
+function tagView() {
+  // The TAG tab works per calendar month (New York time) and ignores the date filter, so it always matches your books.
+  const pool = ALL.filter((r) => (!F.artist || r.artist === F.artist) && (!F.venue || r.venue === F.venue) && (!F.account || r.account === F.account));
+  const months = [...new Set(pool.map((r) => r.month))].sort().reverse();
+  const curKey = todayISO().slice(0, 7);
+  if (!UI.tagMonth || (UI.tagMonth !== "all" && !months.includes(UI.tagMonth))) UI.tagMonth = months.includes(curKey) ? curKey : months[0] || "all";
+  const key = UI.tagMonth;
+  const rows = key === "all" ? pool : pool.filter((r) => r.month === key);
+  const t = agg(rows), comm = commissionOf(t.profit);
+  const latest = [...rows].sort((a, b) => b.ts - a.ts)[0];
+  const asOf = latest ? new Date(latest.ts).toLocaleString("en-US", { timeZone: NY, month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
+
+  const select = h("select", { id: "tag-month", style: { width: "auto", minWidth: "220px" } },
+    months.map((k) => h("option", { value: k, text: `${monthLabel(k, true)}${k === curKey ? " (this month)" : ""}` })), h("option", { value: "all", text: "All time" }));
+  select.value = key; select.onchange = () => { UI.tagMonth = select.value; paint(); };
+  const rate = h("input", { type: "number", id: "comm-rate", min: "0", max: "100", step: "0.5", value: String(UI.commission), style: { width: "90px" } });
+  rate.onchange = async () => {
+    const v = Math.min(100, Math.max(0, Number(rate.value) || 0));
+    UI.commission = v; const p = await loadPrefs(); p.commission = v; savePrefs(); paint();
+  };
+
+  const show = UI.tagVisible;
+  const big = (label, value, c, foot) => h("div", { class: "kpi tag big" }, h("div", { class: "lbl", text: label }), h("div", { class: `v ${show ? c : "masked"}`, text: show ? value : "••••••" }), h("div", { class: "f", text: foot }));
+  const head = h("div", { class: "kpis three" },
+    big(`TAG · ${key === "all" ? "All time" : monthLabel(key, true)}`, sm(t.profit), cls(t.profit), "Net profit after losses"),
+    big(`Commission accrued (${UI.commission}%)`, money(comm), "", `${UI.commission}% of the TAG`),
+    big("Profit after commission", sm(t.profit - comm), cls(t.profit - comm), "What you keep"));
+
+  const line = (k, v, c = "") => [h("div", { class: "k", text: k }), h("div", { class: `v ${c}`, text: v })];
+  const totals = h("div", { class: "kv" }, [
+    line("Transactions", fmtInt(t.n)), line("Tickets", fmtInt(t.tickets)),
+    line("Gross sales", money(t.revenue)), line("Total cost", money(t.cost)),
+    line("Net profit (TAG)", show ? sm(t.profit) : "••••••", show ? cls(t.profit) : ""),
+    line("Total losses", money(Math.abs(t.lossAmt)), t.lossAmt ? "down" : ""),
+    line("Weighted ROI", sp(t.roi), cls(t.roi)), line("Profit margin", sp(t.margin)),
+    line("Profitable / losing / break-even", `${t.wins} / ${t.losses} / ${t.even}`),
+    line("Win rate", fmtPct(t.winRate, 2)), line("Profit per ticket", sm(t.tickets ? t.profit / t.tickets : 0)),
+    line(`Commission at ${UI.commission}%`, show ? money(comm) : "••••••"), line("Profit after commission", show ? sm(t.profit - comm) : "••••••"),
+    line("Latest entry", latest ? `${latest.artist}${latest.section ? `, Sec ${latest.section}` : ""}${latest.row_name ? ` Row ${latest.row_name}` : ""}, ${latest.quantity} tix, ${asOf} ET` : "—"),
+  ].flat());
+
+  // month-by-month book
+  const byMonth = groupBy(pool, (r) => r.month).sort((a, b) => b.key.localeCompare(a.key));
+  const all = agg(pool);
+  const mask = (v) => (show ? v : "••••");
+  const book = table([
+    ["key", "Month", "", (g) => h("a", { class: "link-like", href: "#p/tag", text: g.key === "all" ? "All time" : monthLabel(g.key, true), onclick: (e) => { e.preventDefault(); UI.tagMonth = g.key; paint(); scrollTo(0, 0); } })],
+    ["n", "Sales", "r"], ["tickets", "Tickets", "r"], ["revenue", "Gross", "r", (g) => money(g.revenue)], ["cost", "Cost", "r", (g) => money(g.cost)],
+    ["lossAmt", "Losses", "r", (g) => h("span", { class: g.lossAmt ? "down" : "", text: money(Math.abs(g.lossAmt)) })],
+    ["profit", "TAG", "r", (g) => h("span", { class: show ? cls(g.profit) : "", text: mask(sm(g.profit)) })],
+    ["roi", "ROI", "r", (g) => h("span", { class: cls(g.roi), text: sp(g.roi) })],
+    ["comm", `Commission ${UI.commission}%`, "r", (g) => mask(money(commissionOf(g.profit)))],
+    ["after", "After commission", "r", (g) => h("span", { class: show ? cls(g.profit - commissionOf(g.profit)) : "", text: mask(sm(g.profit - commissionOf(g.profit))) })],
+  ], [...byMonth, { key: "all", ...all }], { rowClass: (g) => (g.key === key ? "best" : g.key === "all" ? "total" : "") });
+
+  return h("div", { class: "stack" },
+    h("div", { class: "row" }, h("span", { class: "lbl", text: "Period" }), select, h("span", { class: "spacer" }),
+      h("label", { for: "comm-rate", class: "inline-lbl", text: "Commission %" }), rate,
+      h("button", { type: "button", onclick: () => { UI.tagVisible = !UI.tagVisible; paint(); } }, show ? "Hide numbers" : "Show numbers")),
+    head,
+    h("div", { class: "grid g-tag" },
+      card(`${key === "all" ? "All-time" : monthLabel(key, true)} totals${latest ? ` · through ${asOf} ET` : ""}`, totals, null,
+        "Calculated from every sale in the hub, using New York time. Win, loss and break-even go by the actual profit. Commission is charged on a positive TAG only."),
+      card("Month by month", book)));
 }

@@ -338,3 +338,13 @@ tr.best td:first-child { box-shadow: inset 2px 0 0 var(--accent); }
   .filters.open { display: grid; }
   .presets { margin-top: 6px; }
 }
+.kpis.six { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+@media (max-width: 1250px) { .kpis.six { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 640px) { .kpis.six { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.kpis.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 760px) { .kpis.three { grid-template-columns: 1fr; } }
+.kpi.big .v { font-size: 30px; }
+tr.total td { border-top: 1px solid var(--line-2); font-weight: 700; background: var(--panel-2); }
+.inline-lbl { display: inline; margin: 0; }
+.g-tag { grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 1500px) { .g-tag { grid-template-columns: minmax(380px, .8fr) minmax(0, 2fr); } }

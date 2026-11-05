@@ -16,7 +16,7 @@ export async function loadPrefs() {
   return prefsCache;
 }
 
-function savePrefs() {
+export function savePrefs() {
   try { localStorage.setItem("hub-prefs", JSON.stringify(prefsCache)); } catch {}
   clearTimeout(saveTimer);
   saveTimer = setTimeout(async () => {
