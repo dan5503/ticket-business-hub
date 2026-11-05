@@ -5,7 +5,9 @@ import { exportCsv } from "./dashboard.js";
 import { loadPrefs, savePrefs } from "./layout.js";
 
 const COLS = "id,discord_message_id,order_number,artist,venue,city,event_date,section,row_name,quantity,total_sale,total_cost,profit,roi,cost_per,sold_per,purchase_date,purchased_at,sold_date,sold_at,account,marketplace,result,created_at";
-const TABS = [["tag", "TAG & Commission"], ["overview", "Overview"], ["monthly", "Monthly"], ["sales", "Sales data"], ["artists", "Artists"], ["venues", "Venues"], ["buying", "Buy timing"], ["losses", "Losses"], ["insights", "Buy insights"]];
+export const MY_TABS = [["tag", "TAG & Commission"], ["overview", "Overview"], ["monthly", "Monthly"], ["sales", "Sales data"], ["artists", "Artists"], ["venues", "Venues"], ["buying", "Buy timing"], ["losses", "Losses"], ["insights", "Buy insights"]];
+export const PLT_TABS = [["overview", "Overview"], ["monthly", "Monthly"], ["sales", "Sales data"], ["artists", "Artists"], ["venues", "Venues"], ["accounts", "Buyer accounts"], ["buying", "Buy timing"], ["losses", "Losses"], ["insights", "Insights"]];
+const KIND = { artist: ["Artist", "Artists", "an artist"], venue: ["Venue", "Venues", "a venue"], account: ["Buyer account", "Buyer accounts", "an account"] };
 const NY = "America/New_York";
 const nyDay = new Intl.DateTimeFormat("en-CA", { timeZone: NY, year: "numeric", month: "2-digit", day: "2-digit" });
 const nyWeekday = new Intl.DateTimeFormat("en-US", { timeZone: NY, weekday: "short" });
@@ -88,15 +90,17 @@ function groupBy(rows, keyFn) {
   return [...m].map(([key, rs]) => ({ key, rows: rs, ...agg(rs) }));
 }
 
+export function makePortfolio(CFG) {
+  const isMyRoute = () => location.hash.startsWith(`#${CFG.base}/`) || location.hash === `#${CFG.base}` || (CFG.base === "p" && location.hash === "");
 /* ---------- module state (kept while you move between tabs) ---------- */
 let ALL = null, rootEl = null, routeArgs = [];
 const F = { preset: "all", from: "", to: "", artist: "", venue: "", account: "", result: "", q: "" };
 const UI = { commission: 20, tagMonth: null, tagVisible: false, bestPer: "month", trendBy: "week", salesSort: ["ts", -1], salesPage: 0, entSort: ["profit", -1], entQ: "", month: null, entityFilter: "", scoreSort: ["score", -1] };
 
-export function onNewSale(r) {
+function onNewSale(r) {
   if (!ALL) return;
   ALL.push(norm(r));
-  if (rootEl && rootEl.isConnected && (location.hash.startsWith("#p") || location.hash === "")) paint();
+  if (rootEl && rootEl.isConnected && isMyRoute()) paint();
 }
 
 function presetRange(p) {
@@ -119,8 +123,8 @@ const filtered = () => ALL.filter((r) => {
 });
 
 let loadedAt = 0;
-async function loadAll() { ALL = (await fetchAll("sales", COLS, "created_at")).map(norm); loadedAt = Date.now(); }
-export async function renderPortfolio(root, args) {
+async function loadAll() { ALL = (await fetchAll(CFG.table, COLS, "created_at")).map(norm); loadedAt = Date.now(); }
+async function renderPortfolio(root, args) {
   rootEl = root; routeArgs = args || [];
   if (!ALL || Date.now() - loadedAt > 60000) {
     const [, prefs] = await Promise.all([loadAll(), loadPrefs()]);
@@ -132,7 +136,7 @@ export async function renderPortfolio(root, args) {
 addEventListener("visibilitychange", async () => {
   if (document.visibilityState !== "visible" || !ALL || Date.now() - loadedAt < 60000) return;
   await loadAll();
-  if (rootEl && rootEl.isConnected && (location.hash.startsWith("#p") || location.hash === "")) paint();
+  if (rootEl && rootEl.isConnected && isMyRoute()) paint();
 });
 
 /* =========================================================
@@ -143,17 +147,18 @@ function paint() {
   if (!ALL.length) {
     root.replaceChildren(h("div", { class: "card empty" },
       h("h2", { text: "No sales yet" }),
-      h("p", { text: "Open #danielbehnam-sales on discord.com in Chrome, click the ALLPWST Discord Data extension and choose “Sync All History”. Your sales will stream in here." }),
+      h("p", { text: CFG.emptyText }),
       h("a", { class: "btn primary", href: "#discord" }, "Go to Discord")));
     return;
   }
   const [tab, name] = routeArgs;
-  const isEntity = tab === "artist" || tab === "venue";
+  const isEntity = tab === "artist" || tab === "venue" || tab === "account";
   const rows = filtered();
   const t = agg(rows);
-  const view = isEntity ? entityView(tab, name) : (TABVIEWS[tab] || TABVIEWS.tag)(rows, t);
-  if (isEntity) root.replaceChildren(tabsBar("", t), view);
-  else root.replaceChildren(filterBar(), kpiRow(t, rows), tabsBar(TABVIEWS[tab] ? tab : "tag", t), view);
+  const view = isEntity ? entityView(tab, name) : (TABVIEWS[tab] || TABVIEWS[CFG.tabs[0][0]])(rows, t);
+  const banner = CFG.title ? h("div", { class: "book-banner" }, h("b", { text: CFG.title }), h("span", { class: "muted", text: CFG.subtitle || "" })) : "";
+  if (isEntity) root.replaceChildren(banner, tabsBar("", t), view);
+  else root.replaceChildren(banner, filterBar(), (CFG.showTag ? kpiRow(t, rows) : kpiRowPlain(t)), tabsBar(TABVIEWS[tab] ? tab : CFG.tabs[0][0], t), view);
 }
 
 function filterBar() {
@@ -205,15 +210,30 @@ function kpiRow(t) {
 }
 const commissionOf = (profit) => Math.max(0, profit) * (UI.commission / 100);
 
+function kpiRowPlain(t) {
+  const kpi = (label, value, foot, c = "") => h("div", { class: "kpi" }, h("div", { class: "lbl", text: label }), h("div", { class: `v ${c}`, text: value }), h("div", { class: "f", text: foot }));
+  return h("div", { class: "kpis six" },
+    kpi("Total profit", sm(t.profit), t.losses ? `After ${sm(t.lossAmt)} in losses` : "No losses", cls(t.profit)),
+    kpi("Gross sales", money(t.revenue), `Cost ${money(t.cost)}`),
+    kpi("Weighted ROI", sp(t.roi), `Margin ${sp(t.margin)}`, cls(t.roi)),
+    kpi("Tickets", fmtInt(t.tickets), `${sm(t.tickets ? t.profit / t.tickets : 0)} per ticket`),
+    kpi("Sales", fmtInt(t.n), `${fmtInt(t.wins)} win · ${fmtInt(t.losses)} loss · ${fmtInt(t.even)} even`),
+    kpi("Win rate", fmtPct(t.winRate, 1), `Avg ${sm(t.n ? t.profit / t.n : 0)} per sale`));
+}
+function venueBoard(rows) {
+  const vs = groupBy(rows, (r) => r.venue).filter((g) => g.n >= 3).sort((a, b) => b.roi - a.roi).slice(0, 12);
+  return vs.length ? table([["key", "Venue", "", (g) => entityLink("venue", g.key)], ["n", "Sales", "r"], ["profit", "Profit", "r", (g) => h("span", { class: cls(g.profit), text: sm(g.profit) })], ["roi", "Avg ROI", "r", (g) => h("span", { class: cls(g.roi), text: sp(g.roi) })], ["winRate", "Win rate", "r", (g) => fmtPct(g.winRate, 0)]], vs) : empty("Not enough sales yet.");
+}
+
 function tabsBar(active, t) {
   return h("nav", { class: "tabs", "aria-label": "Portfolio views" },
-    TABS.map(([k, label]) => h("a", { href: `#p/${k}`, class: active === k ? "active" : "", "aria-current": active === k ? "page" : null }, label,
+    CFG.tabs.map(([k, label]) => h("a", { href: `#${CFG.base}/${k}`, class: active === k ? "active" : "", "aria-current": active === k ? "page" : null }, label,
       k === "losses" && t.losses ? h("span", { class: "count", text: fmtInt(t.losses) }) : "")));
 }
 
 const card = (title, body, actions = null, note = null) => h("section", { class: "card" }, h("div", { class: "card-head" }, h("h2", { class: "card-title", text: title }), h("span", { class: "spacer" }), actions), body, note ? h("p", { class: "note-line", text: note }) : "");
 const seg = (opts, cur, onPick) => h("div", { class: "seg", role: "group" }, opts.map(([v, t]) => h("button", { type: "button", class: cur === v ? "on" : "", text: t, onclick: () => onPick(v) })));
-const entityLink = (kind, name) => name ? h("a", { class: "link-like", href: `#p/${kind}/${encodeURIComponent(name)}`, text: name }) : h("span", { class: "muted", text: "—" });
+const entityLink = (kind, name) => name ? h("a", { class: "link-like", href: `#${CFG.base}/${kind}/${encodeURIComponent(name)}`, text: name }) : h("span", { class: "muted", text: "—" });
 const empty = (text) => h("p", { class: "muted", text });
 
 function table(cols, rows, opts = {}) {
@@ -265,7 +285,7 @@ const TABVIEWS = {
     const topTable = (kind, groups) => {
       const top = [...groups].sort((a, b) => b.profit - a.profit).slice(0, 8);
       const max = Math.max(1, ...top.map((g) => Math.abs(g.profit)));
-      return table([["key", kind === "artist" ? "Artist" : "Venue", "", (g, i) => h("span", {}, h("span", { class: "muted", text: `${i + 1}  ` }), entityLink(kind, g.key))],
+      return table([["key", KIND[kind][0], "", (g, i) => h("span", {}, h("span", { class: "muted", text: `${i + 1}  ` }), entityLink(kind, g.key))],
         ["n", "Sales", "r"],
         ["profit", "Profit", "r", (g) => h("div", {}, h("span", { class: cls(g.profit), text: sm(g.profit) }), h("div", { class: "mini-bar" }, h("i", { class: g.profit < 0 ? "down" : "", style: { width: `${(Math.abs(g.profit) / max) * 100}%` } })))],
         ["roi", "Avg ROI", "r", (g) => h("span", { class: cls(g.roi), text: sp(g.roi) })]], top);
@@ -274,12 +294,12 @@ const TABVIEWS = {
     const markets = groupBy(rows, (r) => r.marketplace).sort((a, b) => b.profit - a.profit);
     return h("div", { class: "stack" },
       h("div", { class: "grid g-2" }, card("Revenue and profit by month", chart, legend([["Revenue", "var(--series-1)"], ["Profit", "var(--series-2)"], ["Running profit", "#9ec5f4"]])), bestCard),
-      h("div", { class: "grid g-2e" }, card("Top artists by profit", topTable("artist", groupBy(rows, (r) => r.artist)), h("a", { class: "btn icon", href: "#p/artists" }, "All artists")),
-        card("Top venues by profit", topTable("venue", groupBy(rows, (r) => r.venue)), h("a", { class: "btn icon", href: "#p/venues" }, "All venues"))),
+      h("div", { class: "grid g-2e" }, card("Top artists by profit", topTable("artist", groupBy(rows, (r) => r.artist)), h("a", { class: "btn icon", href: `#${CFG.base}/artists` }, "All artists")),
+        card("Top venues by profit", topTable("venue", groupBy(rows, (r) => r.venue)), h("a", { class: "btn icon", href: `#${CFG.base}/venues` }, "All venues"))),
       h("div", { class: "grid g-2e" },
         card("Latest sales", table([["artist", "Artist", "", (r) => h("div", {}, entityLink("artist", r.artist), badge(r), h("span", { class: "sub", text: whenText(r) }))],
           ["quantity", "Tix", "r"], ["profit", "Profit", "r", (r) => h("span", { class: `chip-money ${cls(r.profit)}`, text: sm(r.profit) })], ["roi", "ROI", "r", (r) => h("span", { class: cls(r.roi), text: sp(r.roi) })]], recent),
-          h("a", { class: "btn icon", href: "#p/sales" }, "All sales")),
+          h("a", { class: "btn icon", href: `#${CFG.base}/sales` }, "All sales")),
         card("Where you sold", markets.length ? table([["key", "Marketplace", ""], ["n", "Sales", "r"], ["revenue", "Revenue", "r", (g) => money(g.revenue)], ["profit", "Profit", "r", (g) => h("span", { class: cls(g.profit), text: sm(g.profit) })], ["roi", "Avg ROI", "r", (g) => h("span", { class: cls(g.roi), text: sp(g.roi) })]], markets) : empty("No marketplace info yet."))));
   },
 
@@ -369,6 +389,7 @@ const TABVIEWS = {
   },
 
   artists: (rows) => entityList("artist", rows),
+  accounts: (rows) => entityList("account", rows),
   venues: (rows) => entityList("venue", rows),
 
   buying(rows) {
@@ -402,7 +423,7 @@ const TABVIEWS = {
     const kpi = (label, value, foot, c = "") => h("div", { class: "kpi" }, h("div", { class: "lbl", text: label }), h("div", { class: `v ${c}`, text: value }), h("div", { class: "f", text: foot }));
     const byA = groupBy(losers, (r) => r.artist).sort((a, b) => a.profit - b.profit).slice(0, 10);
     const byV = groupBy(losers, (r) => r.venue).sort((a, b) => a.profit - b.profit).slice(0, 10);
-    const lossTable = (kind, gs) => gs.length ? table([["key", kind === "artist" ? "Artist" : "Venue", "", (g) => entityLink(kind, g.key)], ["n", "Losses", "r"], ["profit", "Lost", "r", (g) => h("span", { class: "down", text: sm(g.profit) })]], gs) : empty("No losses here.");
+    const lossTable = (kind, gs) => gs.length ? table([["key", KIND[kind][0], "", (g) => entityLink(kind, g.key)], ["n", "Losses", "r"], ["profit", "Lost", "r", (g) => h("span", { class: "down", text: sm(g.profit) })]], gs) : empty("No losses here.");
     return h("div", { class: "stack" },
       h("div", { class: "kpis" },
         kpi("Losing sales", fmtInt(losers.length), rows.length ? `${fmtPct((losers.length / rows.length) * 100, 1)} of sales` : "", losers.length ? "down" : ""),
@@ -435,12 +456,12 @@ function trendOf(rs) {
 }
 function entityList(kind, rows) {
   const groups = groupBy(rows, (r) => r[kind]).map((g) => ({ ...g, trend: trendOf(g.rows), avgCost: g.tickets ? g.cost / g.tickets : null }));
-  const q = h("input", { type: "search", placeholder: `Find ${kind === "artist" ? "an artist" : "a venue"}`, value: UI.entQ, style: { maxWidth: "260px" } });
+  const q = h("input", { type: "search", placeholder: `Find ${KIND[kind][2]}`, value: UI.entQ, style: { maxWidth: "260px" } });
   let qt; q.oninput = () => { clearTimeout(qt); qt = setTimeout(() => { UI.entQ = q.value.trim(); paint(); }, 300); };
   const list = sortRows(groups.filter((g) => !UI.entQ || g.key.toLowerCase().includes(UI.entQ.toLowerCase())), UI.entSort);
   const max = Math.max(1, ...list.map((g) => Math.abs(g.profit)));
-  return card(`${kind === "artist" ? "Artists" : "Venues"} · ${fmtInt(list.length)}`, table([
-    ["key", kind === "artist" ? "Artist" : "Venue", "", (g) => entityLink(kind, g.key)],
+  return card(`${KIND[kind][1]} · ${fmtInt(list.length)}`, table([
+    ["key", KIND[kind][0], "", (g) => entityLink(kind, g.key)],
     ["n", "Sales", "r"], ["tickets", "Tickets", "r"], ["revenue", "Revenue", "r", (g) => money(g.revenue)],
     ["profit", "Profit", "r", (g) => h("div", {}, h("span", { class: cls(g.profit), text: sm(g.profit) }), h("div", { class: "mini-bar" }, h("i", { class: g.profit < 0 ? "down" : "", style: { width: `${(Math.abs(g.profit) / max) * 100}%` } })))],
     ["roi", "Avg ROI", "r", (g) => h("span", { class: cls(g.roi), text: sp(g.roi) })],
@@ -457,7 +478,7 @@ function entityView(kind, rawName) {
   const name = decodeURIComponent(rawName || "");
   const other = kind === "artist" ? "venue" : "artist";
   const base = ALL.filter((r) => r[kind] === name);
-  if (!base.length) return card("Not found", h("div", {}, empty(`No sales found for “${name}”.`), h("a", { class: "btn", href: `#p/${kind}s` }, "Back")));
+  if (!base.length) return card("Not found", h("div", {}, empty(`No sales found for “${name}”.`), h("a", { class: "btn", href: `#${CFG.base}/${kind}s` }, "Back")));
   if (UI.entName !== kind + name) { UI.entName = kind + name; UI.entityFilter = ""; }
   const others = groupBy(base, (r) => r[other]).sort((a, b) => b.n - a.n);
   if (UI.entityFilter && !others.some((o) => o.key === UI.entityFilter)) UI.entityFilter = "";
@@ -482,13 +503,13 @@ function entityView(kind, rawName) {
   const secs = groupBy(rows, (r) => r.section).sort((a, b) => b.profit - a.profit);
   const kpi = (label, value, foot, c = "") => h("div", { class: "kpi" }, h("div", { class: "lbl", text: label }), h("div", { class: `v ${c}`, text: value }), h("div", { class: "f", text: foot }));
   const avgCostT = t.tickets ? t.cost / t.tickets : null, avgSoldT = t.tickets ? t.revenue / t.tickets : null;
-  const showsList = groupBy(rows, (r) => `${r.event_date || ""}|${kind === "artist" ? r.venue : r.artist}`).sort((a, b) => (b.key > a.key ? 1 : -1));
+  const showsList = groupBy(rows, (r) => `${r.event_date || ""}|${kind === "artist" ? r.venue : kind === "venue" ? r.artist : `${r.artist} @ ${r.venue || ""}`}`).sort((a, b) => (b.key > a.key ? 1 : -1));
 
   return h("div", { class: "stack" },
     h("div", {},
-      h("div", { class: "crumbs" }, h("a", { href: `#p/${kind}s`, text: kind === "artist" ? "Artists" : "Venues" }), "/", name),
+      h("div", { class: "crumbs" }, h("a", { href: `#${CFG.base}/${kind}s`, text: KIND[kind][1] }), "/", name),
       h("div", { class: "entity-title" }, h("h1", { text: name }),
-        h("span", { class: "muted", text: `${kind === "artist" ? "Artist" : "Venue"} · ${plural(others.length, other)} · ${plural(shows, "show")} · Recent trend ` }),
+        h("span", { class: "muted", text: `${KIND[kind][0]} · ${plural(others.length, other)} · ${plural(shows, "show")} · Recent trend ` }),
         h("span", { class: tr.dir > 0 ? "up" : tr.dir < 0 ? "down" : "muted", text: `${tr.dir > 0 ? "▲" : tr.dir < 0 ? "▼" : "•"} ${tr.text.toLowerCase()}` })),
       h("div", { class: "chipset" }, h("span", { class: "lbl", text: `${other}s:` }),
         h("button", { type: "button", class: UI.entityFilter ? "" : "on", onclick: () => { UI.entityFilter = ""; paint(); } }, `All ${other}s `, h("span", { class: "muted", text: String(base.length) })),
@@ -550,7 +571,7 @@ function insightsView(rows) {
 
   // inventory watch (loads your inventory once)
   const watch = h("div", {}, empty("Loading your inventory…"));
-  (async () => {
+  if (CFG.inventory) (async () => {
     try {
       if (!invCache) invCache = await fetchAll("inventory_live", "id,artist,venue,event_date,quantity,remaining_qty,remaining_cost,cost_per,order_number", "event_date");
       const today = todayISO(), soon = addDays(today, 21);
@@ -574,7 +595,7 @@ function insightsView(rows) {
       card("ROI by price paid per ticket", roiBars(bands, "label", "ROI by price paid"), null, "Which price range earns you the best return."),
       card("ROI by section level", levels.length ? roiBars(levels, "key", "ROI by section level") : empty("Needs section info."), null, "Floor, lower bowl, upper levels. Based on the section number.")),
     h("div", { class: "grid g-2e" },
-      card("Unsold tickets, shows in the next 3 weeks", watch, null, "Risk is based on how that artist has sold for you before."),
+      CFG.inventory ? card("Unsold tickets, shows in the next 3 weeks", watch, null, "Risk is based on how that artist has sold for you before.") : card("Best venues (3+ sales)", venueBoard(rows)),
       card("Buyer accounts", accounts.length ? table([["key", "Account", ""], ["n", "Sales", "r"], ["profit", "Profit", "r", (g) => h("span", { class: cls(g.profit), text: sm(g.profit) })], ["roi", "Avg ROI", "r", (g) => h("span", { class: cls(g.roi), text: sp(g.roi) })], ["winRate", "Win rate", "r", (g) => fmtPct(g.winRate, 0)]], accounts.slice(0, 15)) : empty("No buyer accounts recorded yet."))),
     calculator());
 }
@@ -649,7 +670,7 @@ function tagView() {
   const all = agg(pool);
   const mask = (v) => (show ? v : "••••");
   const book = table([
-    ["key", "Month", "", (g) => h("a", { class: "link-like", href: "#p/tag", text: g.key === "all" ? "All time" : monthLabel(g.key, true), onclick: (e) => { e.preventDefault(); UI.tagMonth = g.key; paint(); scrollTo(0, 0); } })],
+    ["key", "Month", "", (g) => h("a", { class: "link-like", href: `#${CFG.base}/tag`, text: g.key === "all" ? "All time" : monthLabel(g.key, true), onclick: (e) => { e.preventDefault(); UI.tagMonth = g.key; paint(); scrollTo(0, 0); } })],
     ["n", "Sales", "r"], ["tickets", "Tickets", "r"], ["revenue", "Gross", "r", (g) => money(g.revenue)], ["cost", "Cost", "r", (g) => money(g.cost)],
     ["lossAmt", "Losses", "r", (g) => h("span", { class: g.lossAmt ? "down" : "", text: money(Math.abs(g.lossAmt)) })],
     ["profit", "TAG", "r", (g) => h("span", { class: show ? cls(g.profit) : "", text: mask(sm(g.profit)) })],
@@ -667,4 +688,7 @@ function tagView() {
       card(`${key === "all" ? "All-time" : monthLabel(key, true)} totals${latest ? ` · through ${asOf} ET` : ""}`, totals, null,
         "Calculated from every sale in the hub, using New York time. Win, loss and break-even go by the actual profit. Commission is charged on a positive TAG only."),
       card("Month by month", book)));
+}
+
+  return { renderPortfolio, onNewSale };
 }

@@ -30,8 +30,9 @@ async function rpc(fn, body) {
 }
 
 const handlers = {
-  async send({ rows }) { const res = await rpc('ingest_sales_with_key', { p_sales: rows }); return { result: res }; },
-  async existing({ ids }) { if (!ids.length) return { ids: [] }; const d = await rpc('existing_sales_with_key', { p_ids: ids }); return { ids: d || [] }; },
+  // book 'plt' = company channel (#plt-sales), kept completely separate from your own sales
+  async send({ rows, book }) { const res = await rpc(book === 'plt' ? 'ingest_plt_with_key' : 'ingest_sales_with_key', { p_sales: rows }); return { result: res }; },
+  async existing({ ids, book }) { if (!ids.length) return { ids: [] }; const d = await rpc(book === 'plt' ? 'existing_plt_with_key' : 'existing_sales_with_key', { p_ids: ids }); return { ids: d || [] }; },
   async status() { return { result: await rpc('sync_status_with_key', {}) }; },
   async openHub() { chrome.tabs.create({ url: HUB_URL + 'app.html#dashboard' }); return {}; }
 };

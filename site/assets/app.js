@@ -1,5 +1,5 @@
 import { sb, $, $$, h, requireSession, startIdleTimer, toast, fmtMoney, fmtPct } from "./common.js";
-import { renderPortfolio, onNewSale } from "./portfolio.js";
+import { makePortfolio, MY_TABS, PLT_TABS } from "./portfolio.js";
 import { renderInventory } from "./inventory.js";
 import { renderDiscord } from "./discord.js";
 import { renderLinks } from "./links.js";
@@ -117,9 +117,16 @@ sb.channel("sales-live")
   .on("postgres_changes", { event: "INSERT", schema: "public", table: "sales" }, (p) => {
     const r = p.new || {};
     announce(r);
-    onNewSale(r);
+    mine.onNewSale(r);
   })
   .subscribe((status) => live.classList.toggle("on", status === "SUBSCRIBED"));
+
+/* ---------- two separate books: your sales and PLT company sales ---------- */
+const mine = makePortfolio({ base: "p", table: "sales", tabs: MY_TABS, showTag: true, inventory: true,
+  emptyText: "Open #danielbehnam-sales on discord.com in Chrome, click the ALLPWST Discord Data extension and choose “Sync All History”. Your sales will stream in here." });
+const plt = makePortfolio({ base: "plt", table: "plt_sales", tabs: PLT_TABS, showTag: false, inventory: false,
+  title: "PLT Sales", subtitle: "Company-wide sales from #plt-sales. Kept completely separate from your own numbers, TAG and inventory.",
+  emptyText: "Open #plt-sales on discord.com in Chrome, click the ALLPWST Discord Data extension and choose “Sync All History”. Company sales will appear here, separate from yours." });
 
 /* ---------- routing ---------- */
 const views = { inventory: renderInventory, discord: renderDiscord, links: renderLinks };
@@ -127,14 +134,15 @@ let cleanup = null, lastKey = "";
 async function route() {
   const hash = decodeURIComponent(location.hash.slice(1));
   const [top, ...rest] = hash.split("/");
-  const key = views[top] ? top : "p";
+  const key = views[top] ? top : top === "plt" ? "plt" : "p";
   $$(".nav a").forEach((a) => a.classList.toggle("active", a.dataset.nav === key));
+  $("#tape").classList.toggle("hidden", key === "plt"); // your personal ticker stays off the company page
   if (typeof cleanup === "function") cleanup();
   const root = $("#view");
   if (key !== lastKey) { root.replaceChildren(h("div", { class: "empty" }, "Loading…")); window.scrollTo(0, 0); }
   lastKey = key;
   try {
-    cleanup = key === "p" ? await renderPortfolio(root, rest) : await views[key](root);
+    cleanup = key === "p" ? await mine.renderPortfolio(root, rest) : key === "plt" ? await plt.renderPortfolio(root, rest) : await views[key](root);
   } catch (err) {
     console.error(err);
     root.replaceChildren(h("div", { class: "card empty" }, h("h2", { text: "Couldn't load this page" }), h("p", { text: err.message || String(err) })));

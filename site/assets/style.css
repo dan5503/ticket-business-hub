@@ -348,3 +348,6 @@ tr.total td { border-top: 1px solid var(--line-2); font-weight: 700; background:
 .inline-lbl { display: inline; margin: 0; }
 .g-tag { grid-template-columns: minmax(0, 1fr); }
 @media (min-width: 1500px) { .g-tag { grid-template-columns: minmax(380px, .8fr) minmax(0, 2fr); } }
+
+.book-banner { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; padding: 10px 14px; margin-bottom: 12px; border: 1px solid rgba(240,180,41,.35); border-radius: var(--r); background: linear-gradient(90deg, rgba(240,180,41,.08), transparent 60%); }
+.book-banner b { font-family: var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--gold); font-size: 13px; }

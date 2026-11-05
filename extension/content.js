@@ -1,19 +1,26 @@
 // ALLPWST Discord Data - in-page panel on discord.com (reads the page you have open; never uses your Discord login)
 (() => {
   if (window.__salesExporter) return; window.__salesExporter = true;
-  const CHANNEL = 'danielbehnam-sales';
+  // Which channel goes where. More specific names first.
+  const CHANNELS = [
+    { name: 'plt-sales', book: 'plt', label: 'PLT company sales' },
+    { name: 'danielbehnam-sales', book: 'mine', label: 'My sales' },
+  ];
   const BATCH = 100;
   let busy = false, stopFlag = false, observer = null;
 
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   const alive = () => { try { return !!chrome.runtime.id; } catch (e) { return false; } };
-  const onChannel = () => document.title.toLowerCase().includes(CHANNEL);
+  const current = () => { const t = document.title.toLowerCase(); return CHANNELS.find(c => t.includes('#' + c.name) || t.includes(c.name + ' |') || t.includes('| ' + c.name)) || CHANNELS.find(c => t.includes(c.name)) || null; };
+  const onChannel = () => !!current();
+  const book = () => (current() || {}).book || 'mine';
+  const sentKey = () => book() === 'plt' ? 'sentIds_plt' : 'sentIds';
   const store = {
     get: def => new Promise(r => chrome.storage.local.get(def, r)),
     set: obj => new Promise(r => chrome.storage.local.set(obj, r))
   };
-  const getSent = async () => new Set((await store.get({ sentIds: [] })).sentIds);
-  const saveSent = set => store.set({ sentIds: [...set] });
+  const getSent = async () => { const k = sentKey(); return new Set((await store.get({ [k]: [] }))[k]); };
+  const saveSent = set => store.set({ [sentKey()]: [...set] });
 
   // ================= PANEL =================
   const host = document.createElement('div');
@@ -70,8 +77,8 @@
     const st = $('st'); st.textContent = text; st.className = kind || '';
   }
   async function refreshMeta() {
-    const d = await store.get({ sentIds: [], lastRun: 0 });
-    $('meta').textContent = d.sentIds.length + ' sales sent from this browser' + (d.lastRun ? ' · last ' + new Date(d.lastRun).toLocaleString() : '');
+    const k = sentKey(), d = await store.get({ [k]: [], lastRun: 0 }), c = current();
+    $('meta').textContent = (c ? 'This channel goes to: ' + c.label + '. ' : 'Open #danielbehnam-sales or #plt-sales. ') + d[k].length + ' sent from this browser' + (d.lastRun ? ' · last ' + new Date(d.lastRun).toLocaleString() : '');
   }
   function setBusy(b) { busy = b; $('all').disabled = b; $('new').disabled = b; }
 
@@ -101,7 +108,8 @@
 
   function guard(fn) {
     if (!alive()) return status('Extension was updated. Refresh this page (F5).', 'err');
-    if (!onChannel()) return status('Open the #' + CHANNEL + ' channel first.', 'err');
+    if (!onChannel()) return status('Open #danielbehnam-sales (your sales) or #plt-sales (company sales) first.', 'err');
+    refreshMeta();
     fn();
   }
 
@@ -198,7 +206,7 @@
       const chunk = rows.slice(i, i + BATCH);
       let res, tries = 0;
       do {
-        res = await bg({ type: 'send', rows: chunk });
+        res = await bg({ type: 'send', book: book(), rows: chunk });
         if (res.ok) break;
         tries++; if (tries < 4) await sleep(3000);
       } while (tries < 4);
@@ -231,7 +239,7 @@
       const all = [...found.values()];
       status('Reached the top: ' + all.length + ' sales found. Sending to your hub…');
       const r = await send(all, 'Sending');
-      status('Done! ' + r.added + ' new sales added to your hub' + (r.dup ? ' (' + r.dup + ' were already there)' : '') + '.', 'ok');
+      status('Done! ' + r.added + (book() === 'plt' ? ' new sales added to PLT Sales' : ' new sales added to your hub') + (r.dup ? ' (' + r.dup + ' were already there)' : '') + '.', 'ok');
       toBottom();
     } catch (e) { status('Error: ' + e.message, 'err'); }
     finally { setBusy(false); refreshMeta(); }
@@ -246,7 +254,7 @@
       while (!stopFlag && !hit) {
         const vis = visibleSales('new').filter(m => !fresh.has(m.id));
         if (vis.length) {
-          const ex = await bg({ type: 'existing', ids: vis.map(m => m.discord_message_id) });
+          const ex = await bg({ type: 'existing', book: book(), ids: vis.map(m => m.discord_message_id) });
           if (!ex.ok) throw new Error(ex.error);
           const known = new Set(ex.ids);
           vis.forEach(m => { if (known.has(m.discord_message_id)) hit = true; else fresh.set(m.id, m); });
@@ -262,7 +270,7 @@
       toBottom();
       if (!list.length) return status('Up to date. No new sales.', 'ok');
       const r = await send(list, 'Sending');
-      status(r.added + ' new sale' + (r.added === 1 ? '' : 's') + ' added to your hub.', 'ok');
+      status(r.added + ' new sale' + (r.added === 1 ? '' : 's') + (book() === 'plt' ? ' added to PLT Sales.' : ' added to your hub.'), 'ok');
     } catch (e) { status('Error: ' + e.message, 'err'); }
     finally { setBusy(false); refreshMeta(); }
   }
@@ -277,13 +285,13 @@
       const list = visibleSales('auto').filter(m => !sent.has(m.id));
       if (!list.length) return;
       // Skip ones already in the database (e.g. from Export All on another computer)
-      const ex = await bg({ type: 'existing', ids: list.map(m => m.discord_message_id) });
+      const ex = await bg({ type: 'existing', book: book(), ids: list.map(m => m.discord_message_id) });
       const known = new Set(ex.ok ? ex.ids : []);
       const todo = list.filter(m => !known.has(m.discord_message_id));
       if (!todo.length) { const s = await getSent(); list.forEach(m => s.add(m.id)); await saveSent(s); return; }
       try {
         const r = await send(todo);
-        status('Live: ' + r.added + ' new sale' + (r.added === 1 ? '' : 's') + ' added at ' + new Date().toLocaleTimeString(), 'ok');
+        status('Live (' + (book() === 'plt' ? 'PLT' : 'mine') + '): ' + r.added + ' new sale' + (r.added === 1 ? '' : 's') + ' added at ' + new Date().toLocaleTimeString(), 'ok');
         refreshMeta();
       } catch (e) { status('Auto error: ' + e.message, 'err'); }
     }, 2500);
