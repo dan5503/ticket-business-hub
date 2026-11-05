@@ -1,7 +1,7 @@
-import { h, s, fetchAll, fmtMoney, fmtMoneyShort, fmtInt, fmtPct, fmtDate, monthLabel, signClass, todayISO } from "./common.js";
+import { h, s, fetchAll, fmtMoney, fmtMoneyShort, fmtInt, fmtPct, fmtDate, fmtDateTime, monthLabel, signClass, todayISO } from "./common.js";
 import { makeBoard } from "./layout.js";
 
-const COLS = "id,order_number,artist,venue,event_date,section,row_name,quantity,total_sale,total_cost,profit,roi,cost_per,sold_per,purchase_date,sold_date,account,marketplace,created_at";
+const COLS = "id,order_number,artist,venue,event_date,section,row_name,quantity,total_sale,total_cost,profit,roi,cost_per,sold_per,purchase_date,sold_date,sold_at,account,marketplace,created_at";
 const num = (v) => (v == null || v === "" ? 0 : Number(v));
 const dayOf = (r) => r.sold_date || (r.created_at || "").slice(0, 10);
 const daysBetween = (a, b) => (Date.parse(b) - Date.parse(a)) / 86400000;
@@ -38,7 +38,7 @@ function presetRange(p) {
 
 export async function renderDashboard(root) {
   const all = await fetchAll("sales", COLS, "sold_date");
-  let tSort = "sold_date", tDir = -1, tPage = 0, tQ = "";
+  let tSort = "sold_at", tDir = -1, tPage = 0, tQ = "";
   const state = { preset: "all", from: "", to: "", artist: "", venue: "", account: "", tagVisible: false, rankBy: "artist", rankMetric: "profit" };
 
   if (!all.length) {
@@ -162,7 +162,7 @@ export async function renderDashboard(root) {
     wrap.append(tip);
     const draw = () => {
       [...wrap.querySelectorAll("svg")].forEach((n) => n.remove());
-      const W = Math.max(320, wrap.clientWidth), H = 280, m = { t: 12, r: 8, b: 30, l: 56 };
+      const W = Math.max(320, wrap.clientWidth), H = 220, m = { t: 12, r: 8, b: 30, l: 56 };
       const iw = W - m.l - m.r, ih = H - m.t - m.b;
       const maxV = Math.max(1, ...months.map((d) => Math.max(d.revenue, d.profit)));
       const minV = Math.min(0, ...months.map((d) => d.profit));
@@ -314,9 +314,9 @@ export async function renderDashboard(root) {
   // ---------- the sales table ----------
   function salesTable() {
     const cols = [
-      ["artist", "Artist", "t"], ["event_date", "Date", "d"], ["venue", "Venue", "t"], ["quantity", "Tickets", "n"],
+      ["artist", "Artist", "t"], ["event_date", "Show date", "d"], ["venue", "Venue", "t"], ["quantity", "Tickets", "n"],
       ["total_sale", "Total", "m"], ["profit", "Profit", "m"], ["roi", "ROI", "p"], ["cost_per", "Cost per", "m"],
-      ["sold_per", "Sold per", "m"], ["sold_date", "Sold", "d"], ["marketplace", "Sold on", "t"], ["account", "Account", "t"]];
+      ["sold_per", "Sold per", "m"], ["sold_at", "Sold at", "dt"], ["marketplace", "Sold on", "t"], ["account", "Account", "t"]];
     const per = 25;
     const rows = D.rows;
     const tbody = h("tbody"), thead = h("thead"), pager = h("div", { class: "pager" });
@@ -325,8 +325,9 @@ export async function renderDashboard(root) {
     const current = () => {
       const list = tQ ? rows.filter((r) => [r.artist, r.venue, r.account, r.order_number, r.section, r.marketplace].some((v) => (v || "").toLowerCase().includes(tQ))) : rows;
       const numeric = ["m", "p", "n"].includes(cols.find((c) => c[0] === tSort)[2]);
+      const val = (r) => (tSort === "sold_at" ? r.sold_at || (r.sold_date ? r.sold_date + "T12:00:00" : null) || r.created_at : r[tSort]);
       return [...list].sort((a, b) => {
-        const x = a[tSort], y = b[tSort];
+        const x = val(a), y = val(b);
         if (x == null && y == null) return 0; if (x == null) return 1; if (y == null) return -1;
         return (numeric ? Number(x) - Number(y) : String(x).localeCompare(String(y))) * tDir;
       });
@@ -337,6 +338,7 @@ export async function renderDashboard(root) {
       if (t === "p") return h("td", { class: `r num ${signClass(Number(v))}`, text: fmtPct(v == null ? null : Number(v)) });
       if (t === "n") return h("td", { class: "r num", text: v ?? "—" });
       if (t === "d") return h("td", { class: "num", text: fmtDate(v) });
+      if (t === "dt") return h("td", { class: "num", text: fmtDateTime(r.sold_at, r.sold_date) });
       return h("td", { class: k === "artist" ? "strong" : "", text: v || "—", title: v || "" });
     };
     function paint() {

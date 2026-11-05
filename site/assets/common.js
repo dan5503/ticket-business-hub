@@ -58,6 +58,12 @@ export function fmtDate(iso) {
   const [y, m, d] = iso.slice(0, 10).split("-").map(Number);
   return new Date(y, m - 1, d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
+export function fmtDateTime(iso, fallbackDate) {
+  if (!iso) return fallbackDate ? fmtDate(fallbackDate) : "—";
+  const d = new Date(iso);
+  if (isNaN(d)) return "—";
+  return d.toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
+}
 export function monthLabel(key, long = false) {
   const [y, m] = key.split("-").map(Number);
   return new Date(y, m - 1, 1).toLocaleDateString("en-US", long ? { month: "long", year: "numeric" } : { month: "short", year: "2-digit" });

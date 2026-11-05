@@ -1,4 +1,4 @@
-import { sb, h, CONFIG, fmtMoney, fmtInt, fmtDate, fmtPct, signClass, toast, modal, copyText, niceError } from "./common.js";
+import { sb, h, CONFIG, fmtMoney, fmtInt, fmtDate, fmtDateTime, fmtPct, signClass, toast, modal, copyText, niceError } from "./common.js";
 import { parseSalePosts } from "./parse.js";
 import { makeBoard } from "./layout.js";
 
@@ -11,7 +11,7 @@ const ago = (iso) => {
 export async function renderDiscord(root) {
   const [countRes, recentRes, runsRes, keysRes] = await Promise.all([
     sb.from("sales").select("id", { count: "exact", head: true }),
-    sb.from("sales").select("artist,venue,event_date,quantity,total_sale,profit,roi,sold_date,marketplace,created_at").order("created_at", { ascending: false }).limit(15),
+    sb.from("sales").select("artist,venue,event_date,quantity,total_sale,profit,roi,sold_date,sold_at,marketplace,created_at").order("sold_at", { ascending: false, nullsFirst: false }).order("created_at", { ascending: false }).limit(15),
     sb.from("sync_runs").select("source,received,added,created_at").eq("kind", "sales").order("created_at", { ascending: false }).limit(10),
     sb.from("sync_keys").select("id,label,key_hint,created_at,last_used_at,revoked_at").order("created_at", { ascending: false }),
   ]);
@@ -67,13 +67,13 @@ export async function renderDiscord(root) {
     : h("p", { class: "muted", text: "Nothing synced yet." });
 
   const latest = () => recentRes.data.length ? h("div", { class: "table-wrap" }, h("table", {},
-      h("thead", {}, h("tr", {}, ["Event", "Show date", "Venue", "Tickets", "Total", "Profit", "ROI", "Sold", "Sold on"].map((t, i) => h("th", { class: [3, 4, 5, 6].includes(i) ? "r" : "", text: t })))),
+      h("thead", {}, h("tr", {}, ["Event", "Show date", "Venue", "Tickets", "Total", "Profit", "ROI", "Sold at", "Sold on"].map((t, i) => h("th", { class: [3, 4, 5, 6].includes(i) ? "r" : "", text: t })))),
       h("tbody", {}, recentRes.data.map((r) => h("tr", {},
         h("td", { class: "strong", text: r.artist || "—" }), h("td", { text: fmtDate(r.event_date) }), h("td", { text: r.venue || "—" }),
         h("td", { class: "r num", text: r.quantity ?? "—" }), h("td", { class: "r num", text: fmtMoney(Number(r.total_sale), true) }),
         h("td", { class: `r num ${signClass(Number(r.profit))}`, text: fmtMoney(Number(r.profit), true) }),
         h("td", { class: `r num ${signClass(Number(r.roi))}`, text: fmtPct(r.roi == null ? null : Number(r.roi)) }),
-        h("td", { text: fmtDate(r.sold_date) }), h("td", { text: r.marketplace || "—" }))))))
+        h("td", { class: "num", text: fmtDateTime(r.sold_at, r.sold_date) }), h("td", { text: r.marketplace || "—" }))))))
     : h("p", { class: "muted", text: "No sales yet." });
 
   function paste() {
