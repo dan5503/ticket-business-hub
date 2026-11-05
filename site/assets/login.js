@@ -56,5 +56,9 @@ forms.signup.addEventListener("submit", async (e) => {
   busy(forms.signup, false);
   if (error) return say(niceError(error), "error");
   if (data.session) return location.replace(appUrl);
-  say("Account created! Check your email and click the confirmation link, then sign in here.", "ok");
+  // The owner's account is confirmed automatically, so sign straight in.
+  const r = await sb.auth.signInWithPassword({ email: $("#su-email").value.trim(), password: pw });
+  if (!r.error) return location.replace(appUrl);
+  say("Account created! Sign in with your new password.", "ok");
+  show("login");
 });
