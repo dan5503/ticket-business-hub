@@ -5,8 +5,8 @@ import { exportCsv } from "./dashboard.js";
 import { loadPrefs, savePrefs } from "./layout.js";
 
 const COLS = "id,discord_message_id,order_number,artist,venue,city,event_date,section,row_name,quantity,total_sale,total_cost,profit,roi,cost_per,sold_per,purchase_date,purchased_at,sold_date,sold_at,account,marketplace,result,created_at";
-export const MY_TABS = [["tag", "TAG & Commission"], ["recent", "Day · 3 days · Week"], ["overview", "Overview"], ["monthly", "Monthly"], ["sales", "Sales data"], ["artists", "Artists"], ["venues", "Venues"], ["buying", "Buy timing"], ["losses", "Losses"], ["insights", "Buy insights"]];
-export const PLT_TABS = [["recent", "Day · 3 days · Week"], ["overview", "Overview"], ["monthly", "Monthly"], ["sales", "Sales data"], ["artists", "Artists"], ["venues", "Venues"], ["accounts", "Buyer accounts"], ["buying", "Buy timing"], ["losses", "Losses"], ["insights", "Insights"]];
+export const MY_TABS = [["month", "TAG & Month"], ["recent", "Day · 3 days · Week"], ["overview", "Overview"], ["sales", "Sales"], ["artists", "Artists"], ["venues", "Venues"], ["insights", "Buy insights"], ["buying", "Buy timing"], ["losses", "Losses"]];
+export const PLT_TABS = [["recent", "Day · 3 days · Week"], ["month", "Month"], ["overview", "Overview"], ["sales", "Sales"], ["artists", "Artists"], ["venues", "Venues"], ["accounts", "Buyer accounts"], ["insights", "Insights"], ["buying", "Buy timing"], ["losses", "Losses"]];
 const KIND = { artist: ["Artist", "Artists", "an artist"], venue: ["Venue", "Venues", "a venue"], account: ["Buyer account", "Buyer accounts", "an account"] };
 const NY = "America/New_York";
 const nyDay = new Intl.DateTimeFormat("en-CA", { timeZone: NY, year: "numeric", month: "2-digit", day: "2-digit" });
@@ -155,10 +155,13 @@ function paint() {
   const isEntity = tab === "artist" || tab === "venue" || tab === "account";
   const rows = filtered();
   const t = agg(rows);
-  const view = isEntity ? entityView(tab, name) : (TABVIEWS[tab] || TABVIEWS[CFG.tabs[0][0]])(rows, t);
+  const view = isEntity ? entityView(tab, name) : (TABVIEWS[tab === "tag" || tab === "monthly" ? "month" : tab] || TABVIEWS[CFG.tabs[0][0]])(rows, t);
   const banner = CFG.title ? h("div", { class: "book-banner" }, h("b", { text: CFG.title }), h("span", { class: "muted", text: CFG.subtitle || "" })) : "";
+  const active = TABVIEWS[tab] && CFG.tabs.some(([k]) => k === tab) ? tab : CFG.tabs[0][0];
+  // TAG & Month and Day · 3 days · Week have their own periods, so the filters and top numbers only show on the analysis tabs.
+  const ownPeriod = active === "month" || active === "recent";
   if (isEntity) root.replaceChildren(banner, tabsBar("", t), view);
-  else root.replaceChildren(banner, filterBar(), (CFG.showTag ? kpiRow(t, rows) : kpiRowPlain(t)), tabsBar(TABVIEWS[tab] ? tab : CFG.tabs[0][0], t), view);
+  else root.replaceChildren(banner, ownPeriod ? "" : filterBar(), ownPeriod ? "" : (CFG.showTag ? kpiRow(t, rows) : kpiRowPlain(t)), tabsBar(active, t), view);
 }
 
 function filterBar() {
@@ -196,28 +199,24 @@ function filterBar() {
 function kpiRow(t) {
   const eye = h("button", { type: "button", class: "eye", text: UI.tagVisible ? "Hide" : "Show", "aria-pressed": String(UI.tagVisible), onclick: () => { UI.tagVisible = !UI.tagVisible; paint(); } });
   const kpi = (label, value, foot, c = "") => h("div", { class: "kpi" }, h("div", { class: "lbl", text: label }), h("div", { class: `v ${c}`, text: value }), h("div", { class: "f", text: foot }));
-  const comm = commissionOf(t.profit);
   const masked = (v, c) => h("div", { class: `v ${UI.tagVisible ? c : "masked"}`, text: UI.tagVisible ? v : "••••••" });
-  return h("div", { class: "kpis six" },
+  return h("div", { class: "kpis" },
     h("div", { class: "kpi tag" }, h("div", { class: "lbl", text: "TAG (net profit)" }), eye, masked(sm(t.profit), cls(t.profit)),
-      h("div", { class: "f", text: t.losses ? `After ${sm(t.lossAmt)} in losses` : "No losses" })),
-    h("div", { class: "kpi tag" }, h("div", { class: "lbl", text: `Commission (${UI.commission}%)` }), masked(money(comm), ""),
-      h("div", { class: "f", text: UI.tagVisible ? `After commission ${sm(t.profit - comm)}` : "Tap Show on TAG" })),
+      h("div", { class: "f", text: t.losses ? `After ${money(Math.abs(t.lossAmt))} in losses` : "No losses" })),
+    h("div", { class: "kpi tag" }, h("div", { class: "lbl", text: `Your commission (${UI.commission}%)` }), masked(money(commissionOf(t.profit)), ""),
+      h("div", { class: "f", text: `${UI.commission}% of the TAG` })),
     kpi("Gross sales", money(t.revenue), `Cost ${money(t.cost)}`),
     kpi("Weighted ROI", sp(t.roi), `Margin ${sp(t.margin)}`, cls(t.roi)),
-    kpi("Tickets", fmtInt(t.tickets), `${sm(t.tickets ? t.profit / t.tickets : 0)} per ticket`),
-    kpi("Sales", fmtInt(t.n), `${fmtInt(t.wins)} win · ${fmtInt(t.losses)} loss · ${fmtInt(t.even)} even`));
+    kpi("Sales", fmtInt(t.n), `${fmtInt(t.tickets)} tickets · ${fmtInt(t.wins)} win · ${fmtInt(t.losses)} loss`));
 }
 const commissionOf = (profit) => Math.max(0, profit) * (UI.commission / 100);
-
 function kpiRowPlain(t) {
   const kpi = (label, value, foot, c = "") => h("div", { class: "kpi" }, h("div", { class: "lbl", text: label }), h("div", { class: `v ${c}`, text: value }), h("div", { class: "f", text: foot }));
-  return h("div", { class: "kpis six" },
-    kpi("Total profit", sm(t.profit), t.losses ? `After ${sm(t.lossAmt)} in losses` : "No losses", cls(t.profit)),
+  return h("div", { class: "kpis" },
+    kpi("Total profit", sm(t.profit), t.losses ? `After ${money(Math.abs(t.lossAmt))} in losses` : "No losses", cls(t.profit)),
     kpi("Gross sales", money(t.revenue), `Cost ${money(t.cost)}`),
     kpi("Weighted ROI", sp(t.roi), `Margin ${sp(t.margin)}`, cls(t.roi)),
-    kpi("Tickets", fmtInt(t.tickets), `${sm(t.tickets ? t.profit / t.tickets : 0)} per ticket`),
-    kpi("Sales", fmtInt(t.n), `${fmtInt(t.wins)} win · ${fmtInt(t.losses)} loss · ${fmtInt(t.even)} even`),
+    kpi("Sales", fmtInt(t.n), `${fmtInt(t.tickets)} tickets · ${fmtInt(t.wins)} win · ${fmtInt(t.losses)} loss`),
     kpi("Win rate", fmtPct(t.winRate, 1), `Avg ${sm(t.n ? t.profit / t.n : 0)} per sale`));
 }
 function venueBoard(rows) {
@@ -264,7 +263,7 @@ function sortRows(rows, [key, dir], getter) {
    Tabs
    ========================================================= */
 const TABVIEWS = {
-  tag: () => tagView(),
+  month: () => monthView(),
   recent: () => recentView(),
   overview(rows) {
     if (!rows.length) return card("Overview", empty("No sales match these filters."));
@@ -277,12 +276,6 @@ const TABVIEWS = {
       line: { name: "Running profit", values: months.map((m) => (run += m.profit)), color: "#9ec5f4" },
       tip: (i) => [["Revenue", money(months[i].revenue)], ["Profit", sm(months[i].profit), cls(months[i].profit)], ["ROI", sp(months[i].roi)], ["Sales", fmtInt(months[i].n)], ["Running profit", sm(months.slice(0, i + 1).reduce((a, m) => a + m.profit, 0))]],
     });
-    const per = UI.bestPer === "month" ? months : groupBy(rows, (r) => r.year);
-    const best = [...per].sort((a, b) => b.profit - a.profit).slice(0, 8);
-    const bestCard = card("Best months", h("div", {},
-      table([["key", UI.bestPer === "month" ? "Month" : "Year", "", (r, i) => h("span", {}, h("span", { class: "muted", text: `${i + 1}  ` }), UI.bestPer === "month" ? monthLabel(r.key) : r.key)],
-        ["n", "Sales", "r"], ["profit", "Profit", "r", (r) => h("span", { class: cls(r.profit), text: sm(r.profit) })], ["roi", "Avg ROI", "r", (r) => h("span", { class: cls(r.roi), text: sp(r.roi) })]], best,
-        { rowClass: (r, i) => (i === 0 ? "best" : "") })), seg([["month", "Per month"], ["year", "Per year"]], UI.bestPer, (v) => { UI.bestPer = v; paint(); }), "Ranked by profit. Your best one is on top.");
     const topTable = (kind, groups) => {
       const top = [...groups].sort((a, b) => b.profit - a.profit).slice(0, 8);
       const max = Math.max(1, ...top.map((g) => Math.abs(g.profit)));
@@ -291,74 +284,13 @@ const TABVIEWS = {
         ["profit", "Profit", "r", (g) => h("div", {}, h("span", { class: cls(g.profit), text: sm(g.profit) }), h("div", { class: "mini-bar" }, h("i", { class: g.profit < 0 ? "down" : "", style: { width: `${(Math.abs(g.profit) / max) * 100}%` } })))],
         ["roi", "Avg ROI", "r", (g) => h("span", { class: cls(g.roi), text: sp(g.roi) })]], top);
     };
-    const recent = [...rows].sort((a, b) => b.ts - a.ts).slice(0, 8);
     const markets = groupBy(rows, (r) => r.marketplace).sort((a, b) => b.profit - a.profit);
     return h("div", { class: "stack" },
-      h("div", { class: "grid g-2" }, card("Revenue and profit by month", chart, legend([["Revenue", "var(--series-1)"], ["Profit", "var(--series-2)"], ["Running profit", "#9ec5f4"]])), bestCard),
+      h("div", { class: "grid g-2" }, card("Revenue and profit by month", chart, legend([["Revenue", "var(--series-1)"], ["Profit", "var(--series-2)"], ["Running profit", "#9ec5f4"]])),
+        card("Where you sold", markets.length ? table([["key", "Marketplace", ""], ["n", "Sales", "r"], ["profit", "Profit", "r", (g) => h("span", { class: cls(g.profit), text: sm(g.profit) })], ["roi", "Avg ROI", "r", (g) => h("span", { class: cls(g.roi), text: sp(g.roi) })]], markets) : empty("No marketplace info yet."))),
       h("div", { class: "grid g-2e" }, card("Top artists by profit", topTable("artist", groupBy(rows, (r) => r.artist)), h("a", { class: "btn icon", href: `#${CFG.base}/artists` }, "All artists")),
         card("Top venues by profit", topTable("venue", groupBy(rows, (r) => r.venue)), h("a", { class: "btn icon", href: `#${CFG.base}/venues` }, "All venues"))),
-      h("div", { class: "grid g-2e" },
-        card("Latest sales", table([["artist", "Artist", "", (r) => h("div", {}, entityLink("artist", r.artist), badge(r), h("span", { class: "sub", text: whenText(r) }))],
-          ["quantity", "Tix", "r"], ["profit", "Profit", "r", (r) => h("span", { class: `chip-money ${cls(r.profit)}`, text: sm(r.profit) })], ["roi", "ROI", "r", (r) => h("span", { class: cls(r.roi), text: sp(r.roi) })]], recent),
-          h("a", { class: "btn icon", href: `#${CFG.base}/sales` }, "All sales")),
-        card("Where you sold", markets.length ? table([["key", "Marketplace", ""], ["n", "Sales", "r"], ["revenue", "Revenue", "r", (g) => money(g.revenue)], ["profit", "Profit", "r", (g) => h("span", { class: cls(g.profit), text: sm(g.profit) })], ["roi", "Avg ROI", "r", (g) => h("span", { class: cls(g.roi), text: sp(g.roi) })]], markets) : empty("No marketplace info yet."))));
-  },
-
-  monthly(rows) {
-    const months = [...new Set(ALL.map((r) => r.month))].sort().reverse();
-    const curKey = todayISO().slice(0, 7);
-    if (!UI.month || !months.includes(UI.month)) UI.month = months.includes(curKey) ? curKey : months[0];
-    const key = UI.month, prevKey = prevMonthKey(key);
-    // the month view ignores the date filter but respects the other filters
-    const pool = ALL.filter((r) => (!F.artist || r.artist === F.artist) && (!F.venue || r.venue === F.venue) && (!F.account || r.account === F.account) && (!F.result || (F.result === "win" ? Math.round(r.profit * 100) > 0 : r.res === F.result)));
-    const mRows = pool.filter((r) => r.month === key), pRows = pool.filter((r) => r.month === prevKey);
-    const isCurrent = key === curKey, dim = daysInMonth(key), dayNow = isCurrent ? Number(todayISO().slice(8)) : dim;
-    const pSame = pRows.filter((r) => Number(r.day.slice(8)) <= dayNow);
-    const m = agg(mRows), p = agg(pSame);
-    const select = h("select", { id: "m-sel", style: { width: "auto", minWidth: "200px" } }, months.map((k) => h("option", { value: k, text: `${monthLabel(k, true)}${k === curKey ? " (this month)" : ""}` })));
-    select.value = key; select.onchange = () => { UI.month = select.value; paint(); };
-    const artists = groupBy(mRows, (r) => r.artist).sort((a, b) => b.profit - a.profit);
-    const venues = groupBy(mRows, (r) => r.venue).sort((a, b) => b.profit - a.profit);
-    const pace = isCurrent && dayNow ? (m.profit / dayNow) * dim : null;
-    const delta = (a, b) => (b ? `${a >= b ? "▲" : "▼"} ${sm(a - b)} vs same point last month` : "First month on record");
-    const bullets = mRows.length ? [
-      h("li", {}, h("b", { text: plural(m.n, "sale") }), ` (${plural(m.tickets, "ticket")}) brought in ${money(m.revenue)} and made `, h("b", { class: cls(m.profit), text: sm(m.profit) }), ` profit at ${sp(m.roi)} average ROI.`),
-      pace != null ? h("li", {}, "At this pace you'll finish the month around ", h("b", { text: sm(pace) }), ".") : "",
-      artists[0] ? h("li", {}, "Top artist: ", entityLink("artist", artists[0].key), ` (${sm(artists[0].profit)} across ${plural(artists[0].n, "sale")}). Top venue: `, entityLink("venue", venues[0] && venues[0].key), venues[0] ? ` (${sm(venues[0].profit)}).` : "") : "",
-      h("li", {}, m.losses ? `${plural(m.losses, "losing sale")} this month, ${sm(m.lossAmt)} in total.` : "No losing sales this month."),
-      pSame.length ? h("li", {}, `Compared with ${monthLabel(prevKey, true)} through day ${dayNow}: `, h("b", { class: cls(m.profit - p.profit), text: `${sm(m.profit - p.profit)} profit` }), `, ${m.n - p.n >= 0 ? "+" : ""}${m.n - p.n} sales.`) : "",
-    ] : [h("li", {}, "No sales in this month yet.")];
-    // running profit by day: this month vs last month
-    const days = Array.from({ length: dim }, (_, i) => i + 1);
-    const cum = (rs, upto) => { const byDay = new Map(); rs.forEach((r) => byDay.set(Number(r.day.slice(8)), (byDay.get(Number(r.day.slice(8))) || 0) + r.profit)); let s = 0; return days.map((d) => (d > upto ? null : (s += byDay.get(d) || 0))); };
-    const line = lineChart({ label: "Running profit through the month", labels: days.map(String), titles: days.map((d) => `${monthLabel(key, true).split(" ")[0]} ${d}`),
-      series: [{ name: monthLabel(key, true), values: cum(mRows, dayNow), color: "var(--accent)" }, { name: monthLabel(prevKey, true), values: cum(pRows, daysInMonth(prevKey)).slice(0, dim), color: "#5b6878", dashed: true }] });
-    const byDay = groupBy(mRows, (r) => r.day).sort((a, b) => a.key.localeCompare(b.key));
-    const bestDay = [...byDay].sort((a, b) => b.profit - a.profit)[0], busiest = [...byDay].sort((a, b) => b.n - a.n)[0];
-    const bestSale = [...mRows].sort((a, b) => b.profit - a.profit)[0], worstSale = [...mRows].sort((a, b) => a.profit - b.profit)[0];
-    const kv = (pairs) => h("div", { class: "kv" }, pairs.flatMap(([k, v, c]) => [h("div", { class: "k", text: k }), h("div", { class: `v ${c || ""}`, text: v })]));
-    const wd = (iso) => new Date(iso + "T12:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
-    const kpi = (label, value, foot, c = "") => h("div", { class: "kpi" }, h("div", { class: "lbl", text: label }), h("div", { class: `v ${c}`, text: value }), h("div", { class: "f", text: foot }));
-    const daily = barChart({ label: "Profit by day", labels: days.map(String), titles: days.map((d) => `${monthLabel(key, true).split(" ")[0]} ${d}`),
-      series: [{ name: "Profit", values: days.map((d) => { const g = byDay.find((x) => Number(x.key.slice(8)) === d); return g ? g.profit : (d <= dayNow ? 0 : null); }), color: "var(--series-2)", negColor: "var(--down)" }],
-      tip: (i) => { const g = byDay.find((x) => Number(x.key.slice(8)) === i + 1); return g ? [["Profit", sm(g.profit), cls(g.profit)], ["Sales", fmtInt(g.n)], ["Tickets", fmtInt(g.tickets)]] : [["Sales", "0"]]; }, height: 160 });
-    return h("div", { class: "stack" },
-      h("div", { class: "row" }, h("span", { class: "lbl", text: "Month" }), select, h("span", { class: "muted small", text: isCurrent ? `Day ${dayNow} of ${dim}. Compared with ${monthLabel(prevKey, true)} through day ${dayNow}.` : `${dim} days.` })),
-      card(`${monthLabel(key, true)}${isCurrent ? " so far" : ""}`, h("ul", { class: "summary" }, bullets)),
-      h("div", { class: "kpis" },
-        kpi("Profit", sm(m.profit), delta(m.profit, p.profit), cls(m.profit)), kpi("Revenue", money(m.revenue), `Cost ${money(m.cost)}`),
-        kpi("Avg ROI", sp(m.roi), p.roi != null ? `${sp(p.roi)} last month at this point` : "", cls(m.roi)), kpi("Sales", fmtInt(m.n), plural(m.tickets, "ticket")),
-        kpi("Win rate", fmtPct(m.winRate, 0), `${fmtInt(m.wins)} wins · ${fmtInt(m.losses)} losses`)),
-      h("div", { class: "grid g-2" },
-        card("Running profit through the month", line, legend([[monthLabel(key, true), "var(--accent)"], [monthLabel(prevKey, true), "#5b6878", true]])),
-        card("Highlights", mRows.length ? kv([
-          ["Best day", bestDay ? `${wd(bestDay.key)} · ${sm(bestDay.profit)}` : "—"],
-          ["Busiest day", busiest ? `${wd(busiest.key)} · ${plural(busiest.n, "sale")}` : "—"],
-          ["Best sale", bestSale ? `${bestSale.artist} · ${sm(bestSale.profit)}` : "—"],
-          ["Worst sale", worstSale ? `${worstSale.artist} · ${sm(worstSale.profit)}` : "—", worstSale && worstSale.profit < 0 ? "down" : ""],
-          ["Profit per sale", sm(m.n ? m.profit / m.n : 0)], ["Profit per ticket", sm(m.tickets ? m.profit / m.tickets : 0)],
-          ["Avg time to sell", dur(m.tts)], ["Artists / venues", `${artists.length} / ${venues.length}`]]) : empty("No sales yet."))),
-      card("Profit by day", daily));
+    );
   },
 
   sales(rows) {
@@ -430,8 +362,7 @@ const TABVIEWS = {
         kpi("Losing sales", fmtInt(losers.length), rows.length ? `${fmtPct((losers.length / rows.length) * 100, 1)} of sales` : "", losers.length ? "down" : ""),
         kpi("Total lost", sm(lost), "Money lost on losing sales", lost < 0 ? "down" : ""),
         kpi("Biggest loss", losers[0] ? sm(losers[0].profit) : "—", losers[0] ? losers[0].artist : "None", losers[0] ? "down" : ""),
-        kpi("Barely made money", fmtInt(ehh.length), "Ehh or break-even sales", ehh.length ? "meh" : ""),
-        kpi("Profit without losses", sm(rows.reduce((a, r) => a + r.profit, 0) - lost), "What you'd have made")),
+        kpi("Barely made money", fmtInt(ehh.length), "Ehh or break-even sales", ehh.length ? "meh" : "")),
       h("div", { class: "grid g-2e" }, card("Losses by artist", lossTable("artist", byA)), card("Losses by venue", lossTable("venue", byV))),
       card(`Losing sales · ${fmtInt(losers.length)}`, losers.length ? table([
         ["day", "Sold", "", (r) => h("span", { class: "num", text: fmtDate(r.day) })],
@@ -624,77 +555,103 @@ function calculator() {
   return card("Price calculator", h("div", {}, h("div", { class: "calc" }, costF, qtyF, feeF, targetF), out), null, "Use before buying to check the listing price you'd need. If your payouts are already after fees, leave the fee at 0.");
 }
 
-/* ---------- TAG & commission ---------- */
-function tagView() {
-  // The TAG tab works per calendar month (New York time) and ignores the date filter, so it always matches your books.
-  const pool = ALL.filter((r) => (!F.artist || r.artist === F.artist) && (!F.venue || r.venue === F.venue) && (!F.account || r.account === F.account));
+/* ---------- TAG & Month (one place for your month: TAG, commission, totals, trend) ---------- */
+function monthView() {
+  const pool = ALL;  // this tab always shows everything for the chosen month
   const months = [...new Set(pool.map((r) => r.month))].sort().reverse();
-  const curKey = todayISO().slice(0, 7);
+  const curKey = nyDay.format(new Date()).slice(0, 7);
   if (!UI.tagMonth || (UI.tagMonth !== "all" && !months.includes(UI.tagMonth))) UI.tagMonth = months.includes(curKey) ? curKey : months[0] || "all";
-  const key = UI.tagMonth;
-  const rows = key === "all" ? pool : pool.filter((r) => r.month === key);
+  const key = UI.tagMonth, isAll = key === "all", isCurrent = key === curKey;
+  const rows = isAll ? pool : pool.filter((r) => r.month === key);
   const t = agg(rows), comm = commissionOf(t.profit);
+  const hide = CFG.showTag && !UI.tagVisible, mask = (v) => (hide ? "••••••" : v);
   const latest = [...rows].sort((a, b) => b.ts - a.ts)[0];
   const asOf = latest ? new Date(latest.ts).toLocaleString("en-US", { timeZone: NY, month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
 
-  const select = h("select", { id: "tag-month", style: { width: "auto", minWidth: "220px" } },
+  // controls
+  const select = h("select", { id: "tag-month", style: { width: "auto", minWidth: "210px" } },
     months.map((k) => h("option", { value: k, text: `${monthLabel(k, true)}${k === curKey ? " (this month)" : ""}` })), h("option", { value: "all", text: "All time" }));
   select.value = key; select.onchange = () => { UI.tagMonth = select.value; paint(); };
-  const rate = h("input", { type: "number", id: "comm-rate", min: "0", max: "100", step: "0.5", value: String(UI.commission), style: { width: "90px" } });
-  rate.onchange = async () => {
-    const v = Math.min(100, Math.max(0, Number(rate.value) || 0));
-    UI.commission = v; const p = await loadPrefs(); p.commission = v; savePrefs(); paint();
-  };
+  let controls = [h("span", { class: "lbl", text: "Period" }), select, h("span", { class: "spacer" })];
+  if (CFG.showTag) {
+    const rate = h("input", { type: "number", id: "comm-rate", min: "0", max: "100", step: "0.5", value: String(UI.commission), style: { width: "80px" } });
+    rate.onchange = async () => { const v = Math.min(100, Math.max(0, Number(rate.value) || 0)); UI.commission = v; const p = await loadPrefs(); p.commission = v; savePrefs(); paint(); };
+    controls = controls.concat([h("label", { for: "comm-rate", class: "inline-lbl", text: "Commission %" }), rate,
+      h("button", { type: "button", onclick: () => { UI.tagVisible = !UI.tagVisible; paint(); } }, hide ? "Show numbers" : "Hide numbers")]);
+  }
 
-  const show = UI.tagVisible;
-  const big = (label, value, c, foot) => h("div", { class: "kpi tag big" }, h("div", { class: "lbl", text: label }), h("div", { class: `v ${show ? c : "masked"}`, text: show ? value : "••••••" }), h("div", { class: "f", text: foot }));
-  const head = h("div", { class: "kpis three" },
-    big(`TAG · ${key === "all" ? "All time" : monthLabel(key, true)}`, sm(t.profit), cls(t.profit), "Net profit after losses"),
-    big(`Commission accrued (${UI.commission}%)`, money(comm), "", `${UI.commission}% of the TAG`),
-    big("Profit after commission", sm(t.profit - comm), cls(t.profit - comm), "What you keep"));
+  // headline: TAG + your commission (yours) / profit (company)
+  const big = (label, value, c, foot) => h("div", { class: "kpi tag big" }, h("div", { class: "lbl", text: label }), h("div", { class: `v ${hide ? "masked" : c}`, text: mask(value) }), h("div", { class: "f", text: foot }));
+  const period = isAll ? "All time" : monthLabel(key, true);
+  const head = CFG.showTag
+    ? h("div", { class: "kpis two" }, big(`TAG · ${period}`, sm(t.profit), cls(t.profit), latest ? `Through ${asOf} ET` : "No sales"),
+        big(`Your commission (${UI.commission}% of TAG)`, money(comm), "", "What you've earned for this period"))
+    : h("div", { class: "kpis two" }, big(`Profit · ${period}`, sm(t.profit), cls(t.profit), latest ? `Through ${asOf} ET` : "No sales"),
+        big("Gross sales", money(t.revenue), "", `Cost ${money(t.cost)}`));
 
+  // plain-English summary (one month only)
+  let summary = "", trend = "";
+  if (!isAll) {
+    const prevKey = prevMonthKey(key), dim = daysInMonth(key), dayNow = isCurrent ? Number(nyDay.format(new Date()).slice(8)) : dim;
+    const pRows = pool.filter((r) => r.month === prevKey), pSame = pRows.filter((r) => Number(r.day.slice(8)) <= dayNow), p = agg(pSame);
+    const artists = groupBy(rows, (r) => r.artist).sort((a, b) => b.profit - a.profit), venues = groupBy(rows, (r) => r.venue).sort((a, b) => b.profit - a.profit);
+    const pace = isCurrent && dayNow ? (t.profit / dayNow) * dim : null;
+    summary = card(`${period}${isCurrent ? " so far" : ""}`, h("ul", { class: "summary" },
+      rows.length ? [
+        h("li", {}, h("b", { text: plural(t.n, "sale") }), ` (${plural(t.tickets, "ticket")}) brought in ${money(t.revenue)} at ${sp(t.roi)} weighted ROI.`),
+        pace != null && !hide ? h("li", {}, "At this pace the month finishes around ", h("b", { text: sm(pace) }), CFG.showTag ? ` TAG, about ${money(commissionOf(pace))} commission.` : ".") : "",
+        pSame.length ? h("li", {}, `Compared with ${monthLabel(prevKey, true)} through day ${dayNow}: `, h("b", { class: hide ? "" : cls(t.profit - p.profit), text: mask(sm(t.profit - p.profit)) }), `, ${t.n - p.n >= 0 ? "+" : ""}${t.n - p.n} sales.`) : "",
+        artists[0] ? h("li", {}, "Top artist: ", entityLink("artist", artists[0].key), ` (${mask(sm(artists[0].profit))}). Top venue: `, entityLink("venue", venues[0] && venues[0].key), venues[0] ? ` (${mask(sm(venues[0].profit))}).` : "") : "",
+        h("li", {}, t.losses ? `${plural(t.losses, "losing sale")}, ${money(Math.abs(t.lossAmt))} lost.` : "No losing sales."),
+      ] : [h("li", {}, "No sales in this month yet.")]));
+    const days = Array.from({ length: dim }, (_, i) => i + 1);
+    const cum = (rs, upto) => { const m = new Map(); rs.forEach((r) => { const d = Number(r.day.slice(8)); m.set(d, (m.get(d) || 0) + r.profit); }); let x = 0; return days.map((d) => (d > upto ? null : (x += m.get(d) || 0))); };
+    trend = card("Running profit through the month", lineChart({ label: "Running profit", labels: days.map(String), titles: days.map((d) => `${monthLabel(key, true).split(" ")[0]} ${d}`),
+      fmt: hide ? () => "•••" : undefined,
+      series: [{ name: monthLabel(key, true), values: cum(rows, dayNow), color: "var(--accent)" }, { name: monthLabel(prevKey, true), values: cum(pRows, daysInMonth(prevKey)).slice(0, dim), color: "#5b6878", dashed: true }] }),
+      legend([[monthLabel(key, true), "var(--accent)"], [monthLabel(prevKey, true), "#5b6878", true]]));
+  }
+
+  // totals (each number once)
   const line = (k, v, c = "") => [h("div", { class: "k", text: k }), h("div", { class: `v ${c}`, text: v })];
-  const totals = h("div", { class: "kv" }, [
+  const byDay = groupBy(rows, (r) => r.day);
+  const bestDay = [...byDay].sort((a, b) => b.profit - a.profit)[0], bestSale = [...rows].sort((a, b) => b.profit - a.profit)[0];
+  const wd = (iso) => new Date(iso + "T12:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+  const totals = card(`${period} totals`, h("div", { class: "kv" }, [
     line("Transactions", fmtInt(t.n)), line("Tickets", fmtInt(t.tickets)),
     line("Gross sales", money(t.revenue)), line("Total cost", money(t.cost)),
-    line("Net profit (TAG)", show ? sm(t.profit) : "••••••", show ? cls(t.profit) : ""),
     line("Total losses", money(Math.abs(t.lossAmt)), t.lossAmt ? "down" : ""),
     line("Weighted ROI", sp(t.roi), cls(t.roi)), line("Profit margin", sp(t.margin)),
     line("Profitable / losing / break-even", `${t.wins} / ${t.losses} / ${t.even}`),
-    line("Win rate", fmtPct(t.winRate, 2)), line("Profit per ticket", sm(t.tickets ? t.profit / t.tickets : 0)),
-    line(`Commission at ${UI.commission}%`, show ? money(comm) : "••••••"), line("Profit after commission", show ? sm(t.profit - comm) : "••••••"),
+    line("Win rate", fmtPct(t.winRate, 2)), line("Profit per ticket", mask(sm(t.tickets ? t.profit / t.tickets : 0))),
+    line("Avg time to sell", dur(t.tts)),
+    line("Best day", bestDay ? `${wd(bestDay.key)} · ${mask(sm(bestDay.profit))}` : "—"),
+    line("Best sale", bestSale ? `${bestSale.artist} · ${mask(sm(bestSale.profit))}` : "—"),
     line("Latest entry", latest ? `${latest.artist}${latest.section ? `, Sec ${latest.section}` : ""}${latest.row_name ? ` Row ${latest.row_name}` : ""}, ${latest.quantity} tix, ${asOf} ET` : "—"),
-  ].flat());
+  ].flat()), null, "New York time. Win, loss and break-even go by actual profit." + (CFG.showTag ? " Commission is earned on a positive TAG only." : ""));
 
   // month-by-month book
   const byMonth = groupBy(pool, (r) => r.month).sort((a, b) => b.key.localeCompare(a.key));
-  const all = agg(pool);
-  const mask = (v) => (show ? v : "••••");
-  const book = table([
-    ["key", "Month", "", (g) => h("a", { class: "link-like", href: `#${CFG.base}/tag`, text: g.key === "all" ? "All time" : monthLabel(g.key, true), onclick: (e) => { e.preventDefault(); UI.tagMonth = g.key; paint(); scrollTo(0, 0); } })],
-    ["n", "Sales", "r"], ["tickets", "Tickets", "r"], ["revenue", "Gross", "r", (g) => money(g.revenue)], ["cost", "Cost", "r", (g) => money(g.cost)],
+  const cols = [
+    ["key", "Month", "", (g) => g.key === "all" ? "All time" : h("a", { class: "link-like", href: `#${CFG.base}/month`, text: monthLabel(g.key, true), onclick: (e) => { e.preventDefault(); UI.tagMonth = g.key; paint(); scrollTo(0, 0); } })],
+    ["n", "Sales", "r"], ["tickets", "Tickets", "r"], ["revenue", "Gross", "r", (g) => money(g.revenue)],
     ["lossAmt", "Losses", "r", (g) => h("span", { class: g.lossAmt ? "down" : "", text: money(Math.abs(g.lossAmt)) })],
-    ["profit", "TAG", "r", (g) => h("span", { class: show ? cls(g.profit) : "", text: mask(sm(g.profit)) })],
+    ["profit", CFG.showTag ? "TAG" : "Profit", "r", (g) => h("span", { class: hide ? "" : cls(g.profit), text: mask(sm(g.profit)) })],
     ["roi", "ROI", "r", (g) => h("span", { class: cls(g.roi), text: sp(g.roi) })],
-    ["comm", `Commission ${UI.commission}%`, "r", (g) => mask(money(commissionOf(g.profit)))],
-    ["after", "After commission", "r", (g) => h("span", { class: show ? cls(g.profit - commissionOf(g.profit)) : "", text: mask(sm(g.profit - commissionOf(g.profit))) })],
-  ], [...byMonth, { key: "all", ...all }], { rowClass: (g) => (g.key === key ? "best" : g.key === "all" ? "total" : "") });
+  ];
+  if (CFG.showTag) cols.push(["comm", `Commission ${UI.commission}%`, "r", (g) => h("b", { text: mask(money(commissionOf(g.profit))) })]);
+  const book = card("Month by month", table(cols, [...byMonth, { key: "all", ...agg(pool) }], { rowClass: (g) => (g.key === key ? "best" : g.key === "all" ? "total" : "") }), null, "Click a month to open it.");
 
   return h("div", { class: "stack" },
-    h("div", { class: "row" }, h("span", { class: "lbl", text: "Period" }), select, h("span", { class: "spacer" }),
-      h("label", { for: "comm-rate", class: "inline-lbl", text: "Commission %" }), rate,
-      h("button", { type: "button", onclick: () => { UI.tagVisible = !UI.tagVisible; paint(); } }, show ? "Hide numbers" : "Show numbers")),
-    head,
-    h("div", { class: "grid g-tag" },
-      card(`${key === "all" ? "All-time" : monthLabel(key, true)} totals${latest ? ` · through ${asOf} ET` : ""}`, totals, null,
-        "Calculated from every sale in the hub, using New York time. Win, loss and break-even go by the actual profit. Commission is charged on a positive TAG only."),
-      card("Month by month", book)));
+    h("div", { class: "row" }, controls), head,
+    isAll ? "" : h("div", { class: "grid g-2" }, summary, trend),
+    h("div", { class: "grid g-tag" }, totals, book));
 }
 
 /* ---------- how you did: today, last 3 days, last 7 days ---------- */
 function recentView() {
   // Uses every filter except the date range, and only this book's own sales.
-  const pool = ALL.filter((r) => (!F.artist || r.artist === F.artist) && (!F.venue || r.venue === F.venue) && (!F.account || r.account === F.account));
+  const pool = ALL;  // this tab always shows everything (no filters)
   const today = nyDay.format(new Date());
   const range = (from, to) => pool.filter((r) => r.day >= from && r.day <= to);
   const hide = CFG.showTag && !UI.tagVisible;
@@ -740,7 +697,7 @@ function recentView() {
   const todays = range(today, today).sort((a, b) => b.ts - a.ts);
 
   return h("div", { class: "stack" },
-    h("div", { class: "row" }, h("span", { class: "muted small", text: `${CFG.title ? "PLT company sales only" : "Your sales only"}. New York time. Each period is compared with the same length of time just before it.` }), h("span", { class: "spacer" }),
+    h("div", { class: "row" }, h("span", { class: "muted small", text: `${CFG.title ? "PLT company sales only" : "Your sales only"}. New York time. Each period is compared with the one just before it.` }), h("span", { class: "spacer" }),
       CFG.showTag ? h("button", { type: "button", onclick: () => { UI.tagVisible = !UI.tagVisible; paint(); } }, UI.tagVisible ? "Hide numbers" : "Show numbers") : ""),
     h("div", { class: "grid g-3" }, windowCard("Today", 1), windowCard("Last 3 days", 3), windowCard("Last 7 days", 7)),
     card(hide ? "Sales by day, last 14 days" : "Profit by day, last 14 days", chart),

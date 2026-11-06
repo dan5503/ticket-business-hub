@@ -101,9 +101,8 @@ export async function renderDiscord(root) {
     return h("div", {}, ta, h("div", { class: "row mt" }, readBtn), preview);
   }
 
-  const board = await makeBoard("discord", ["overview", "latest", "syncs", "extension", "paste"], {
+  const board = await makeBoard("discord", ["overview", "syncs", "extension", "paste"], {
     overview: { title: "Overview", bare: true, render: overview },
-    latest: { title: "Latest sales", render: latest, actions: () => h("a", { class: "btn", href: "#dashboard" }, "Open Sales") },
     syncs: { title: "Recent syncs", render: syncs },
     extension: { title: "Chrome extension", hint: "The extension reads sale posts in the Discord tab you have open and sends them here. It never uses your Discord login.", render: extension },
     paste: { title: "Paste sale posts by hand", collapsed: true, hint: "A backup if the extension isn't available: copy posts from Discord and paste them below.", render: paste },
