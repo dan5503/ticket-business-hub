@@ -190,7 +190,7 @@ function filterBar() {
       h("div", { class: "f" }, h("label", { for: "f-q", text: "Search" }), q)),
     h("div", { class: "presets" },
       presets.map(([k, label]) => h("button", { type: "button", class: `preset ${F.preset === k ? "on" : ""}`, text: label, onclick: () => { F.preset = k; [F.from, F.to] = presetRange(k); paint(); } })),
-      anyFilter ? h("button", { type: "button", class: "preset", text: "Clear", onclick: () => { Object.assign(F, { preset: "all", from: "", to: "", artist: "", venue: "", account: "", result: "", q: "" }); paint(); } }) : ""));
+      anyFilter ? h("button", { type: "button", class: "preset", text: "Reset filters", title: "Show all sales again. Nothing is deleted.", onclick: () => { Object.assign(F, { preset: "all", from: "", to: "", artist: "", venue: "", account: "", result: "", q: "" }); paint(); } }) : ""));
 }
 
 function kpiRow(t) {
