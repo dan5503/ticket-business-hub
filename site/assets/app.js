@@ -3,6 +3,7 @@ import { makePortfolio, MY_TABS, PLT_TABS } from "./portfolio.js";
 import { renderInventory } from "./inventory.js";
 import { renderDiscord } from "./discord.js";
 import { renderLinks } from "./links.js";
+import { renderSpotify } from "./spotify.js";
 
 await requireSession();
 startIdleTimer(30);
@@ -129,7 +130,7 @@ const plt = makePortfolio({ base: "plt", table: "plt_sales_clean", tabs: PLT_TAB
   emptyText: "Open #plt-sales on discord.com in Chrome, click the ALLPWST Discord Data extension and choose “Sync All History”. Company sales will appear here, separate from yours." });
 
 /* ---------- routing ---------- */
-const views = { inventory: renderInventory, discord: renderDiscord, links: renderLinks };
+const views = { inventory: renderInventory, spotify: renderSpotify, discord: renderDiscord, links: renderLinks };
 let cleanup = null, lastKey = "";
 async function route() {
   const hash = decodeURIComponent(location.hash.slice(1));
