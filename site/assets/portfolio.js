@@ -153,6 +153,11 @@ function paint() {
   }
   const [tab, name] = routeArgs;
   const isEntity = tab === "artist" || tab === "venue" || tab === "account";
+  // Overview opens on this month; other tabs on all time, until you pick a period yourself.
+  if (!UI.filtersTouched && !isEntity) {
+    const want = (tab || CFG.tabs[0][0]) === "overview" ? "month" : "all";
+    if (F.preset !== want) { F.preset = want; [F.from, F.to] = presetRange(want); }
+  }
   const rows = filtered();
   const t = agg(rows);
   const view = isEntity ? entityView(tab, name) : (TABVIEWS[tab === "tag" || tab === "monthly" ? "month" : tab] || TABVIEWS[CFG.tabs[0][0]])(rows, t);
@@ -169,18 +174,18 @@ function filterBar() {
   const sel = (id, label, key, opts, allText) => {
     const el = h("select", { id }, h("option", { value: "", text: allText }), opts.map((o) => (Array.isArray(o) ? h("option", { value: o[0], text: o[1] }) : h("option", { value: o, text: o }))));
     el.value = F[key];
-    el.onchange = () => { F[key] = el.value; UI.salesPage = 0; paint(); };
+    el.onchange = () => { F[key] = el.value; UI.filtersTouched = true; UI.salesPage = 0; paint(); };
     return h("div", { class: "f" }, h("label", { for: id, text: label }), el);
   };
   const date = (id, label, key) => {
     const el = h("input", { type: "date", id, value: F[key] });
-    el.onchange = () => { F[key] = el.value; F.preset = "custom"; paint(); };
+    el.onchange = () => { F[key] = el.value; F.preset = "custom"; UI.filtersTouched = true; paint(); };
     return h("div", { class: "f" }, h("label", { for: id, text: label }), el);
   };
   const q = h("input", { type: "search", id: "f-q", placeholder: "Artist, venue, order #…", value: F.q });
-  let qt; q.oninput = () => { clearTimeout(qt); qt = setTimeout(() => { F.q = q.value.trim(); UI.salesPage = 0; paint(); document.getElementById("f-q")?.focus(); }, 350); };
+  let qt; q.oninput = () => { clearTimeout(qt); qt = setTimeout(() => { F.q = q.value.trim(); UI.filtersTouched = true; UI.salesPage = 0; paint(); document.getElementById("f-q")?.focus(); }, 350); };
   const presets = [["month", "This month"], ["30d", "Last 30 days"], ["year", "This year"], ["all", "All time"]];
-  const anyFilter = F.artist || F.venue || F.account || F.result || F.q || F.preset !== "all";
+  const anyFilter = UI.filtersTouched;
   const activeCount = [F.artist, F.venue, F.account, F.result, F.q].filter(Boolean).length + (F.preset === "custom" ? 1 : 0);
   return h("div", {},
     h("button", { type: "button", class: "filter-toggle", "aria-expanded": String(!!UI.filtersOpen), onclick: () => { UI.filtersOpen = !UI.filtersOpen; paint(); } }, `Filters${activeCount ? ` (${activeCount})` : ""}`),
@@ -192,8 +197,8 @@ function filterBar() {
       sel("f-res", "Result", "result", [["win", "All profitable"], ["ehh", "Ehh (small profit)"], ["even", "Break-even ($0)"], ["loss", "Losses"]], "Wins and losses"),
       h("div", { class: "f" }, h("label", { for: "f-q", text: "Search" }), q)),
     h("div", { class: "presets" },
-      presets.map(([k, label]) => h("button", { type: "button", class: `preset ${F.preset === k ? "on" : ""}`, text: label, onclick: () => { F.preset = k; [F.from, F.to] = presetRange(k); paint(); } })),
-      anyFilter ? h("button", { type: "button", class: "preset", text: "Reset filters", title: "Show all sales again. Nothing is deleted.", onclick: () => { Object.assign(F, { preset: "all", from: "", to: "", artist: "", venue: "", account: "", result: "", q: "" }); paint(); } }) : ""));
+      presets.map(([k, label]) => h("button", { type: "button", class: `preset ${F.preset === k ? "on" : ""}`, text: label, onclick: () => { F.preset = k; [F.from, F.to] = presetRange(k); UI.filtersTouched = true; paint(); } })),
+      anyFilter ? h("button", { type: "button", class: "preset", text: "Reset filters", title: "Show all sales again. Nothing is deleted.", onclick: () => { Object.assign(F, { preset: "all", from: "", to: "", artist: "", venue: "", account: "", result: "", q: "" }); UI.filtersTouched = false; paint(); } }) : ""));
 }
 
 function kpiRow(t) {
