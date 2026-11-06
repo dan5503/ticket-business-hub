@@ -5,8 +5,8 @@ import { exportCsv } from "./dashboard.js";
 import { loadPrefs, savePrefs } from "./layout.js";
 
 const COLS = "id,discord_message_id,order_number,artist,venue,city,event_date,section,row_name,quantity,total_sale,total_cost,profit,roi,cost_per,sold_per,purchase_date,purchased_at,sold_date,sold_at,account,marketplace,result,created_at";
-export const MY_TABS = [["tag", "TAG & Commission"], ["overview", "Overview"], ["monthly", "Monthly"], ["sales", "Sales data"], ["artists", "Artists"], ["venues", "Venues"], ["buying", "Buy timing"], ["losses", "Losses"], ["insights", "Buy insights"]];
-export const PLT_TABS = [["overview", "Overview"], ["monthly", "Monthly"], ["sales", "Sales data"], ["artists", "Artists"], ["venues", "Venues"], ["accounts", "Buyer accounts"], ["buying", "Buy timing"], ["losses", "Losses"], ["insights", "Insights"]];
+export const MY_TABS = [["tag", "TAG & Commission"], ["recent", "Day · 3 days · Week"], ["overview", "Overview"], ["monthly", "Monthly"], ["sales", "Sales data"], ["artists", "Artists"], ["venues", "Venues"], ["buying", "Buy timing"], ["losses", "Losses"], ["insights", "Buy insights"]];
+export const PLT_TABS = [["recent", "Day · 3 days · Week"], ["overview", "Overview"], ["monthly", "Monthly"], ["sales", "Sales data"], ["artists", "Artists"], ["venues", "Venues"], ["accounts", "Buyer accounts"], ["buying", "Buy timing"], ["losses", "Losses"], ["insights", "Insights"]];
 const KIND = { artist: ["Artist", "Artists", "an artist"], venue: ["Venue", "Venues", "a venue"], account: ["Buyer account", "Buyer accounts", "an account"] };
 const NY = "America/New_York";
 const nyDay = new Intl.DateTimeFormat("en-CA", { timeZone: NY, year: "numeric", month: "2-digit", day: "2-digit" });
@@ -265,6 +265,7 @@ function sortRows(rows, [key, dir], getter) {
    ========================================================= */
 const TABVIEWS = {
   tag: () => tagView(),
+  recent: () => recentView(),
   overview(rows) {
     if (!rows.length) return card("Overview", empty("No sales match these filters."));
     const months = groupBy(rows, (r) => r.month).sort((a, b) => a.key.localeCompare(b.key));
@@ -688,6 +689,71 @@ function tagView() {
       card(`${key === "all" ? "All-time" : monthLabel(key, true)} totals${latest ? ` · through ${asOf} ET` : ""}`, totals, null,
         "Calculated from every sale in the hub, using New York time. Win, loss and break-even go by the actual profit. Commission is charged on a positive TAG only."),
       card("Month by month", book)));
+}
+
+/* ---------- how you did: today, last 3 days, last 7 days ---------- */
+function recentView() {
+  // Uses every filter except the date range, and only this book's own sales.
+  const pool = ALL.filter((r) => (!F.artist || r.artist === F.artist) && (!F.venue || r.venue === F.venue) && (!F.account || r.account === F.account));
+  const today = nyDay.format(new Date());
+  const range = (from, to) => pool.filter((r) => r.day >= from && r.day <= to);
+  const hide = CFG.showTag && !UI.tagVisible;
+  const mask = (v) => (hide ? "••••••" : v);
+  const pct = (a, b) => (b ? ((a - b) / Math.abs(b)) * 100 : null);
+  const span = (from, to) => (from === to ? new Date(from + "T12:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }) : `${dayLabel(from)} – ${dayLabel(to)}`);
+
+  const windowCard = (label, n) => {
+    const from = addDays(today, -(n - 1)), pFrom = addDays(today, -(2 * n - 1)), pTo = addDays(today, -n);
+    const rows = range(from, today), prevRows = range(pFrom, pTo);
+    const a = agg(rows), b = agg(prevRows), d = a.profit - b.profit, dp = pct(a.profit, b.profit);
+    const best = [...rows].sort((x, y) => y.profit - x.profit)[0];
+    const top = groupBy(rows, (r) => r.artist).sort((x, y) => y.profit - x.profit)[0];
+    const line = (k, v, c = "") => [h("div", { class: "k", text: k }), h("div", { class: `v ${c}`, text: v })];
+    return h("section", { class: "card window" },
+      h("div", { class: "card-head" }, h("h2", { class: "card-title", text: label }), h("span", { class: "spacer" }), h("span", { class: "muted small", text: span(from, today) })),
+      h("div", { class: `big ${hide ? "masked" : cls(a.profit)}`, text: mask(sm(a.profit)) }),
+      h("div", { class: `delta ${hide ? "" : cls(d)}`, text: hide ? "Tap Show to see profit" : `${d >= 0 ? "▲" : "▼"} ${sm(d)}${dp != null ? ` (${dp >= 0 ? "+" : ""}${dp.toFixed(0)}%)` : ""} vs previous ${n === 1 ? "day" : `${n} days`} (${sm(b.profit)})` }),
+      h("div", { class: "kv mt" }, [
+        line("Sales", `${fmtInt(a.n)}  (prev ${fmtInt(b.n)})`),
+        line("Tickets", fmtInt(a.tickets)),
+        line("Gross sales", money(a.revenue)),
+        line("Cost", money(a.cost)),
+        line("Weighted ROI", sp(a.roi), cls(a.roi)),
+        line("Win / loss / even", `${a.wins} / ${a.losses} / ${a.even}`),
+        line("Lost on losing sales", money(Math.abs(a.lossAmt)), a.lossAmt ? "down" : ""),
+        CFG.showTag ? line(`Commission (${UI.commission}%)`, mask(money(commissionOf(a.profit)))) : [],
+        line("Best sale", best ? `${best.artist} ${mask(sm(best.profit))}` : "—"),
+        line("Top artist", top ? `${top.key} ${mask(sm(top.profit))}` : "—"),
+      ].flat()));
+  };
+
+  // daily view for the last 14 days
+  const days = Array.from({ length: 14 }, (_, i) => addDays(today, i - 13));
+  const byDay = new Map(groupBy(range(days[0], today), (r) => r.day).map((g) => [g.key, g]));
+  const chart = barChart({ label: "Profit by day, last 14 days", height: 200,
+    labels: days.map((d) => new Date(d + "T12:00:00").toLocaleDateString("en-US", { weekday: "short", day: "numeric" })),
+    titles: days.map((d) => span(d, d)),
+    series: [{ name: "Profit", values: days.map((d) => (hide ? (byDay.get(d)?.n || 0) : byDay.get(d)?.profit || 0)), color: "var(--series-2)", negColor: "var(--down)" }],
+    fmt: hide ? (v) => fmtInt(v) : undefined,
+    tip: (i) => { const g = byDay.get(days[i]); return g ? [["Profit", mask(sm(g.profit)), hide ? "" : cls(g.profit)], ["Sales", fmtInt(g.n)], ["Tickets", fmtInt(g.tickets)], ["ROI", sp(g.roi)]] : [["Sales", "0"]]; } });
+  const last7 = days.slice(-7).reverse().map((d) => ({ key: d, ...(byDay.get(d) || agg([])) }));
+  const todays = range(today, today).sort((a, b) => b.ts - a.ts);
+
+  return h("div", { class: "stack" },
+    h("div", { class: "row" }, h("span", { class: "muted small", text: `${CFG.title ? "PLT company sales only" : "Your sales only"}. New York time. Each period is compared with the same length of time just before it.` }), h("span", { class: "spacer" }),
+      CFG.showTag ? h("button", { type: "button", onclick: () => { UI.tagVisible = !UI.tagVisible; paint(); } }, UI.tagVisible ? "Hide numbers" : "Show numbers") : ""),
+    h("div", { class: "grid g-3" }, windowCard("Today", 1), windowCard("Last 3 days", 3), windowCard("Last 7 days", 7)),
+    card(hide ? "Sales by day, last 14 days" : "Profit by day, last 14 days", chart),
+    h("div", { class: "grid g-2e" },
+      card("Last 7 days, day by day", table([
+        ["key", "Day", "", (g) => span(g.key, g.key)], ["n", "Sales", "r"], ["tickets", "Tickets", "r"], ["revenue", "Gross", "r", (g) => money(g.revenue)],
+        ["profit", "Profit", "r", (g) => h("span", { class: hide ? "" : cls(g.profit), text: mask(sm(g.profit)) })], ["roi", "ROI", "r", (g) => h("span", { class: cls(g.roi), text: sp(g.roi) })],
+        ["wl", "W / L", "r", (g) => `${g.wins} / ${g.losses}`]], last7)),
+      card(`Today's sales · ${fmtInt(todays.length)}`, todays.length ? table([
+        ["ts", "Time", "", (r) => new Date(r.ts).toLocaleTimeString("en-US", { timeZone: NY, hour: "numeric", minute: "2-digit" })],
+        ["artist", "Artist", "", (r) => h("div", {}, entityLink("artist", r.artist), badge(r))], ["quantity", "Tix", "r"],
+        ["profit", "Profit", "r", (r) => h("span", { class: `chip-money ${hide ? "" : cls(r.profit)}`, text: mask(sm(r.profit)) })], ["roi", "ROI", "r", (r) => h("span", { class: cls(r.roi), text: sp(r.roi) })]], todays.slice(0, 40))
+        : empty(CFG.title ? "No company sales synced yet today. Open #plt-sales with Live on, or click Sync New Sales." : "No sales yet today."))));
 }
 
   return { renderPortfolio, onNewSale };

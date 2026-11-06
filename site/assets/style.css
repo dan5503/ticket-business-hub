@@ -351,3 +351,7 @@ tr.total td { border-top: 1px solid var(--line-2); font-weight: 700; background:
 
 .book-banner { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; padding: 10px 14px; margin-bottom: 12px; border: 1px solid rgba(240,180,41,.35); border-radius: var(--r); background: linear-gradient(90deg, rgba(240,180,41,.08), transparent 60%); }
 .book-banner b { font-family: var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--gold); font-size: 13px; }
+
+.card.window .big { font-family: var(--mono); font-size: 28px; font-weight: 700; margin-top: 2px; }
+.card.window .big.masked { color: var(--text-2); letter-spacing: .2em; }
+.card.window .delta { font-family: var(--mono); font-size: 12px; color: var(--muted); margin-top: 4px; }

@@ -124,7 +124,7 @@ sb.channel("sales-live")
 /* ---------- two separate books: your sales and PLT company sales ---------- */
 const mine = makePortfolio({ base: "p", table: "sales", tabs: MY_TABS, showTag: true, inventory: true,
   emptyText: "Open #danielbehnam-sales on discord.com in Chrome, click the ALLPWST Discord Data extension and choose “Sync All History”. Your sales will stream in here." });
-const plt = makePortfolio({ base: "plt", table: "plt_sales", tabs: PLT_TABS, showTag: false, inventory: false,
+const plt = makePortfolio({ base: "plt", table: "plt_sales_clean", tabs: PLT_TABS, showTag: false, inventory: false,
   title: "PLT Sales", subtitle: "Company-wide sales from #plt-sales. Kept completely separate from your own numbers, TAG and inventory.",
   emptyText: "Open #plt-sales on discord.com in Chrome, click the ALLPWST Discord Data extension and choose “Sync All History”. Company sales will appear here, separate from yours." });
 
