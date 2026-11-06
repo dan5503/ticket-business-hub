@@ -10,15 +10,18 @@ const cls = (v) => (v > 0 ? "up" : v < 0 ? "down" : "");
 const lc = (v) => (v || "").trim().toLowerCase();
 // Ticket listings carry tour names; Spotify has just the artist. Variants in order of preference;
 // each name uses only the first variant that exists on Spotify, so loose splits never beat a real match.
+const norm = (v) => lc(v).replace(/\s+/g, " ").replace(/ (and|&|\+) /g, " & ");
+const swap2 = (v, name) => norm(v) === norm(name);
 export function variants(name) {
   const n = lc(name).replace(/\s+/g, " "); if (!n) return [];
   const out = [], add = (v, min = 2) => { v = (v || "").trim(); if (v.length >= min && !out.includes(v)) out.push(v); };
-  const swap = (v) => (v.includes(" and ") ? v.replace(/ and /g, " & ") : v.includes(" & ") ? v.replace(/ & /g, " and ") : null);
-  add(n); add(swap(n));
+  const swaps = (v) => [" and ", " & ", " + "].filter((j) => v.includes(j)).flatMap((j) => [" and ", " & ", " + "].filter((k) => k !== j).map((k) => v.split(j).join(k)));
+  const swap = (v) => swaps(v)[0] || null;
+  add(n); swaps(n).forEach((v) => add(v));
   const parts = n.split(/\s*[:|(]\s*|\s+[-–—]\s+/), head = parts[0].replace(/\s+(live|tour|in concert|world tour)\b.*$/, "").replace(/\s+\d{4}$/, "").trim();
-  add(parts[0]); add(swap(parts[0])); add(head);
+  add(parts[0]); swaps(parts[0]).forEach((v) => add(v)); add(head);
   parts.slice(1).forEach((p) => add(p, 4));
-  [n, head].forEach((v) => { const m = v.split(/ (?:and|&|with|ft\.?|feat\.?|x) |, /); if (m.length > 1) add(m[0], 4); });
+  [n, head].forEach((v) => { const m = v.split(/ (?:and|&|\+|with|ft\.?|feat\.?|x) |, /); if (m.length > 1) add(m[0], 4); });
   return out;
 }
 const UI = { mine: "holding", climb: "day", q: "" };
@@ -51,8 +54,18 @@ export async function renderSpotify(root) {
     allNames.length ? sb.rpc("spotify_lookup", { p_names: [...new Set(allNames.flatMap(variants))] }).then((r) => r.data || []) : [],
     watch.length ? sb.from("spotify_movers").select("*").in("spotify_id", [...watched]).then((r) => r.data || []) : [],
   ]);
-  const onSpotify = new Set(found.map((a) => lc(a.name))), bestCache = new Map();
-  const best = (name) => { if (!name) return null; if (!bestCache.has(name)) bestCache.set(name, variants(name).find((v) => onSpotify.has(v)) || lc(name)); return bestCache.get(name); };
+  // exact name (or and/&/+ spelling) wins; otherwise the biggest artist among the name's parts
+  const listenersOf = new Map(); found.forEach((a) => { const k = lc(a.name); listenersOf.set(k, Math.max(listenersOf.get(k) || 0, a.listeners || 0)); });
+  const onSpotify = listenersOf, bestCache = new Map();
+  const best = (name) => {
+    if (!name) return null;
+    if (!bestCache.has(name)) {
+      const vs = variants(name), exact = vs.filter((v) => v === lc(name).replace(/\s+/g, " ") || swap2(v, name)).find((v) => listenersOf.has(v));
+      const hits = vs.filter((v) => listenersOf.has(v)).sort((a, b) => listenersOf.get(b) - listenersOf.get(a));
+      bestCache.set(name, exact || hits[0] || lc(name));
+    }
+    return bestCache.get(name);
+  };
   const hist = new Map();
   for (const r of sales) {
     const k = best(r.artist); if (!k) continue;
