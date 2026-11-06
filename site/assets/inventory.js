@@ -3,7 +3,7 @@ import { parseCsv, detect, toRecords, FIELDS } from "./csv.js";
 import { exportCsv } from "./dashboard.js";
 import { makeBoard } from "./layout.js";
 
-const COLS = "id,order_number,artist,venue,event_date,purchase_date,section,row_name,quantity,total_cost,cost_per,account,status,sold_qty,remaining_qty,remaining_cost,sold_revenue,sold_profit,last_sold_at";
+const COLS = "id,order_number,artist,venue,event_date,purchase_date,section,row_name,quantity,total_cost,cost_per,account,status,sold_qty,remaining_qty,remaining_cost,sold_revenue,sold_profit,last_sold_at,expected_profit,expected_roi,basis,discord_artist";
 
 async function callSheet(body) {
   const { data, error } = await sb.functions.invoke("sheet-sync", { body });
@@ -22,10 +22,15 @@ const ago = (iso) => {
 };
 
 export async function renderInventory(root) {
-  const [items, srcRes] = await Promise.all([
-    fetchAll("inventory_live", COLS, "event_date"),
+  const [items, srcRes, team] = await Promise.all([
+    fetchAll("inventory_outlook", COLS, "event_date"),
     sb.from("inventory_sources").select("sheet_url,mapping,last_rows,last_synced_at,last_checked_at,last_status,last_error").maybeSingle(),
+    fetchAll("plt_artist_7d", "artist,sales,tickets,avg_sold_per,profit,roi,last_sold_at", "artist").catch(() => []),
   ]);
+  const teamBy = new Map(team.map((t) => [(t.artist || "").trim().toLowerCase(), t]));
+  const sm = (v) => (v == null || isNaN(v) ? "—" : `${v >= 0 ? "+" : "-"}${fmtMoney(Math.abs(v))}`);
+  const sp = (v) => (v == null || !isFinite(v) ? "—" : `${v >= 0 ? "+" : ""}${Number(v).toFixed(1)}%`);
+  const cl = (v) => (v > 0 ? "up" : v < 0 ? "down" : "");
   const source = srcRes.data;
   // Sales offset inventory: each order's tickets minus the tickets sold on that order number.
   const isSold = (p) => p.remaining_qty === 0 && p.quantity > 0;
@@ -158,15 +163,46 @@ export async function renderInventory(root) {
     return h("div", { class: "headline inv" },
       stat("Tickets on hand", fmtInt(sum(upcoming, "remaining_qty")), `${fmtInt(upcoming.length)} orders for upcoming shows`),
       stat("Money tied up", fmtMoney(sum(upcoming, "remaining_cost")), "What your unsold upcoming tickets cost"),
+      (() => { const withH = upcoming.filter((p) => p.expected_profit != null), e = sum(withH, "expected_profit"), c = sum(withH, "remaining_cost");
+        return stat("Expected profit", sm(e), c ? `${sp((e / c) * 100)} on ${fmtMoney(c)} with sales history` : "Needs sales history"); })(),
       stat("Sold from inventory", fmtInt(sum(items, "sold_qty")), `Tickets matched to Discord sales by order #`),
       stat("Past shows, not matched", fmtInt(sum(past, "remaining_qty")), past.length ? `${fmtMoney(sum(past, "remaining_cost"))} at cost, no sale found` : "Nothing left behind"));
+  }
+
+  // ---------- where your money is tied up ----------
+  function tiedUp() {
+    const m = new Map();
+    for (const p of upcoming) {
+      const name = p.discord_artist || p.artist || "Unknown", k = name.toLowerCase();
+      const g = m.get(k) || { name, left: 0, cost: 0, exp: 0, expCost: 0, next: p.event_date, shows: new Set() };
+      g.left += p.remaining_qty; g.cost += Number(p.remaining_cost || 0); g.shows.add(p.event_date);
+      if (p.expected_profit != null) { g.exp += Number(p.expected_profit); g.expCost += Number(p.remaining_cost || 0); }
+      if (p.event_date < g.next) g.next = p.event_date;
+      m.set(k, g);
+    }
+    const list = [...m.values()].sort((a, b) => b.cost - a.cost);
+    if (!list.length) return h("p", { class: "muted", text: "No unsold tickets for upcoming shows." });
+    const total = sum(upcoming, "remaining_cost") || 1;
+    return h("div", { class: "table-wrap" }, h("table", {},
+      h("thead", {}, h("tr", {}, [["Artist", ""], ["Shows", "r"], ["Left", "r"], ["At cost", "r"], ["Share", ""], ["Expected", "r"], ["Next show", ""], ["Team, last 7 days", ""]].map(([t, c]) => h("th", { class: c, scope: "col", text: t })))),
+      h("tbody", {}, list.slice(0, 25).map((g) => {
+        const t = teamBy.get(g.name.toLowerCase()), costPer = g.left ? g.cost / g.left : 0;
+        const teamCell = t ? h("span", {}, h("span", { class: "pill good", text: `${t.sales} sold` }), h("span", { class: "sub", text: `avg ${fmtMoney(Number(t.avg_sold_per))}/tix · you paid ${fmtMoney(costPer)}` })) : h("span", { class: "muted", text: "Quiet" });
+        return h("tr", {},
+          h("td", { class: "strong", text: g.name }), h("td", { class: "r num", text: fmtInt(g.shows.size) }), h("td", { class: "r num strong", text: fmtInt(g.left) }),
+          h("td", { class: "r num", text: fmtMoney(g.cost) }),
+          h("td", {}, h("div", { class: "mini-bar" }, h("i", { style: { width: `${(g.cost / total) * 100}%` } }))),
+          h("td", { class: `r num ${g.expCost ? cl(g.exp) : ""}`, title: g.expCost ? `${sp((g.exp / g.expCost) * 100)} expected ROI` : "No sales history yet", text: g.expCost ? sm(g.exp) : "—" }),
+          h("td", { class: "num", text: fmtDate(g.next) }), h("td", {}, teamCell));
+      }))),
+      list.length > 25 ? h("p", { class: "muted small mt", text: `Top 25 of ${list.length} artists by money tied up.` }) : "");
   }
 
   // ---------- table ----------
   let show = "upcoming", q = "";
   function table() {
     const cols = [["artist", "Artist or event"], ["event_date", "Show date"], ["venue", "Venue"], ["section", "Section"], ["row_name", "Row"],
-      ["quantity", "Bought"], ["sold_qty", "Sold"], ["remaining_qty", "Left"], ["cost_per", "Cost per"], ["remaining_cost", "Left at cost"], ["purchase_date", "Bought on"], ["account", "Account"], ["order_number", "Order #"]];
+      ["quantity", "Bought"], ["sold_qty", "Sold"], ["remaining_qty", "Left"], ["cost_per", "Cost per"], ["remaining_cost", "Left at cost"], ["expected_profit", "Expected"], ["purchase_date", "Bought on"], ["account", "Account"], ["order_number", "Order #"]];
     const tbody = h("tbody"), count = h("span", { class: "muted small" });
     const chips = h("div", { class: "chips" });
     const search = h("input", { type: "search", placeholder: "Search inventory", "aria-label": "Search inventory", value: q });
@@ -190,6 +226,7 @@ export async function renderInventory(root) {
         h("td", { class: "r num strong", text: p.remaining_qty }),
         h("td", { class: "r num", text: fmtMoney(p.cost_per == null ? null : Number(p.cost_per), true) }),
         h("td", { class: "r num", text: fmtMoney(Number(p.remaining_cost || 0), true) }),
+        h("td", { class: `r num ${p.remaining_qty > 0 ? cl(Number(p.expected_profit)) : ""}`, title: p.basis ? `${sp(Number(p.expected_roi))} ROI, based on how this ${p.basis} sold for you` : "No sales history for this artist yet", text: p.remaining_qty > 0 && p.expected_profit != null ? sm(Number(p.expected_profit)) : "—" }),
         h("td", { class: "num", text: fmtDate(p.purchase_date) }), h("td", { text: p.account || "—" }), h("td", { text: p.order_number || "—" }))));
     }
     [["upcoming", "On hand"], ["sold", "Sold"], ["past", "Past shows, not sold"], ["undated", "No show date"], ["all", "Everything"]].forEach(([v, t]) =>
@@ -200,13 +237,14 @@ export async function renderInventory(root) {
       h("div", { class: "row" }, chips, count, h("span", { class: "spacer" }), h("div", { style: { minWidth: "220px", flex: "1 1 220px", maxWidth: "360px" } }, search),
         h("button", { type: "button", onclick: () => exportCsv(cols, list(), "inventory") }, "Download CSV")),
       h("div", { class: "table-wrap mt" }, h("table", {},
-        h("thead", {}, h("tr", {}, cols.map(([k, t]) => h("th", { class: ["quantity", "sold_qty", "remaining_qty", "cost_per", "remaining_cost"].includes(k) ? "r" : "", text: t })))), tbody)),
+        h("thead", {}, h("tr", {}, cols.map(([k, t]) => h("th", { class: ["quantity", "sold_qty", "remaining_qty", "cost_per", "remaining_cost", "expected_profit"].includes(k) ? "r" : "", text: t })))), tbody)),
       list().length > 500 ? h("p", { class: "muted small mt", text: "Showing the first 500. Search to narrow it down." }) : "");
   }
 
-  const board = await makeBoard("inventory", ["sheet", "overview", "table", "csv"], {
+  const board = await makeBoard("inventory", ["sheet", "overview", "tied", "table", "csv"], {
     sheet: { title: "Google Sheet", collapsed: false, render: sheetPanel },
     overview: { title: "Overview", bare: true, render: overview },
+    tied: { title: "Where your money is tied up", hint: "Upcoming shows only. Expected profit uses the ROI you actually got on the same show, or on that artist when the show hasn't sold yet. Team shows what PLT sold of that artist in the last 7 days. It's a signal only and never added to your numbers.", render: tiedUp },
     table: { title: "Your tickets", hint: "Sales come off automatically: each order shows how many tickets you bought, how many sold on Discord (matched by order #), and how many are left.", render: table },
     csv: { title: "Upload a file instead", collapsed: true, render: csvPanel },
   });

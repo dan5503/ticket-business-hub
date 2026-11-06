@@ -38,6 +38,13 @@ function resultOf(r) {
   if (t) return /ehh|meh|break/.test(t) ? "ehh" : "win";
   return r.roi != null && r.roi < 15 ? "ehh" : "win";
 }
+const TYPES = [["massive", "Massive"], ["fantastic", "Fantastic"], ["profitable", "Profitable"], ["ehh", "Ehh"], ["breakeven", "Break even"], ["loss", "Loss"]];
+function typeOf(r) {
+  const t = (r.result || "").toLowerCase();
+  if (/massive/.test(t)) return "massive"; if (/fantastic/.test(t)) return "fantastic"; if (/ehh|meh/.test(t)) return "ehh";
+  if (/break/.test(t)) return "breakeven"; if (/loss/.test(t)) return "loss"; if (/profit/.test(t)) return "profitable";
+  return { win: "profitable", ehh: "ehh", even: "breakeven", loss: "loss" }[r.res];
+}
 const RESULT_LABEL = { win: ["Profitable", "good"], ehh: ["Ehh", "meh"], even: ["Break-even", ""], loss: ["Loss", "bad"] };
 const badge = (r) => { const [t, c] = RESULT_LABEL[r.res]; const own = (r.result || "").replace(/\s*sale$/i, "").trim(); const useOwn = own && !(r.res === "even" && /loss/i.test(own)); return h("span", { class: `pill ${c}`, text: useOwn ? own : t }); };
 
@@ -65,7 +72,7 @@ function norm(r) {
   const bought = r.purchased_at ? Date.parse(r.purchased_at) : r.purchase_date ? Date.parse(r.purchase_date + "T12:00:00") : null;
   o.tts = bought && o.ts >= bought ? (o.ts - bought) / DAY : null;                       // days to sell
   o.lead = bought && r.event_date ? (Date.parse(r.event_date + "T20:00:00") - bought) / DAY : null; // bought this many days before the show
-  o.res = resultOf(o);
+  o.res = resultOf(o); o.type = typeOf(o);
   return o;
 }
 
@@ -94,7 +101,8 @@ export function makePortfolio(CFG) {
   const isMyRoute = () => location.hash.startsWith(`#${CFG.base}/`) || location.hash === `#${CFG.base}` || (CFG.base === "p" && location.hash === "");
 /* ---------- module state (kept while you move between tabs) ---------- */
 let ALL = null, rootEl = null, routeArgs = [];
-const F = { preset: "all", from: "", to: "", artist: "", venue: "", account: "", result: "", q: "" };
+const F = { preset: "all", from: "", to: "", artist: "", venue: "", account: "", result: "", type: "", q: "", monthKey: "", yearKey: "" };
+let INV = null, TEAM = null;   // your unsold tickets (with expected profit) and what the company sold in the last 7 days
 const UI = { commission: 20, tagMonth: null, tagVisible: false, bestPer: "month", trendBy: "week", salesSort: ["ts", -1], salesPage: 0, entSort: ["profit", -1], entQ: "", month: null, entityFilter: "", scoreSort: ["score", -1] };
 
 function onNewSale(r) {
@@ -105,7 +113,8 @@ function onNewSale(r) {
 
 function presetRange(p) {
   const today = todayISO();
-  if (p === "month") return [today.slice(0, 8) + "01", today];
+  if (p === "month") { const k = F.monthKey || today.slice(0, 7); return [k + "-01", `${k}-${String(daysInMonth(k)).padStart(2, "0")}`]; }
+  if (p === "yearpick") { const y = F.yearKey || today.slice(0, 4); return [y + "-01-01", y + "-12-31"]; }
   if (p === "30d") return [addDays(today, -29), today];
   if (p === "year") return [today.slice(0, 5) + "01-01", today];
   return ["", ""];
@@ -118,17 +127,42 @@ const filtered = () => ALL.filter((r) => {
   if (F.venue && r.venue !== F.venue) return false;
   if (F.account && r.account !== F.account) return false;
   if (F.result && !(F.result === "win" ? r.profit > 0 && Math.round(r.profit * 100) > 0 : r.res === F.result)) return false;
+  if (F.type && r.type !== F.type) return false;
   if (F.q) { const q = F.q.toLowerCase(); if (![r.artist, r.venue, r.city, r.account, r.order_number, r.section, r.marketplace].some((v) => (v || "").toLowerCase().includes(q))) return false; }
   return true;
 });
 
 let loadedAt = 0;
-async function loadAll() { ALL = (await fetchAll(CFG.table, COLS, "created_at")).map(norm); loadedAt = Date.now(); }
+async function loadAll() {
+  const jobs = [fetchAll(CFG.table, COLS, "created_at")];
+  if (CFG.inventory) jobs.push(fetchAll("inventory_outlook", "id,artist,discord_artist,venue,event_date,quantity,remaining_qty,remaining_cost,cost_per,expected_profit,expected_roi,basis", "event_date").catch(() => null),
+    fetchAll("plt_artist_7d", "artist,sales,tickets,avg_sold_per,profit,roi,last_sold_at", "artist").catch(() => null));
+  const [rows, inv, team] = await Promise.all(jobs);
+  ALL = rows.map(norm); INV = inv; TEAM = team; loadedAt = Date.now();
+}
+/* your unsold tickets for upcoming shows, grouped by the artist name used on Discord */
+const lc = (v) => (v || "").trim().toLowerCase();
+function holdings() {
+  if (!INV) return null;
+  const today = todayISO(), m = new Map();
+  for (const p of INV) {
+    if (!(p.remaining_qty > 0) || !p.event_date || p.event_date < today) continue;
+    const k = lc(p.discord_artist || p.artist), g = m.get(k) || { key: p.discord_artist || p.artist, left: 0, cost: 0, exp: 0, expCost: 0, next: p.event_date, soon: 0, soonCost: 0 };
+    const cost = Number(p.remaining_cost || 0);
+    g.left += p.remaining_qty; g.cost += cost; if (p.event_date < g.next) g.next = p.event_date;
+    if (p.expected_profit != null) { g.exp += Number(p.expected_profit); g.expCost += cost; }
+    if (p.event_date <= addDays(today, 7)) { g.soon += p.remaining_qty; g.soonCost += cost; }
+    m.set(k, g);
+  }
+  return m;
+}
+const teamMap = () => new Map((TEAM || []).map((t) => [lc(t.artist), t]));
 async function renderPortfolio(root, args) {
   rootEl = root; routeArgs = args || [];
   if (!ALL || Date.now() - loadedAt > 60000) {
     const [, prefs] = await Promise.all([loadAll(), loadPrefs()]);
     if (prefs && prefs.commission != null) UI.commission = Number(prefs.commission);
+    if (prefs && prefs.goal) UI.goal = Number(prefs.goal);
   }
   paint();
 }
@@ -165,8 +199,50 @@ function paint() {
   const active = TABVIEWS[tab] && CFG.tabs.some(([k]) => k === tab) ? tab : CFG.tabs[0][0];
   // TAG & Month and Day · 3 days · Week have their own periods, so the filters and top numbers only show on the analysis tabs.
   const ownPeriod = active === "month" || active === "recent";
-  if (isEntity) root.replaceChildren(banner, tabsBar("", t), view);
-  else root.replaceChildren(banner, ownPeriod ? "" : filterBar(), ownPeriod ? "" : (CFG.showTag ? kpiRow(t, rows) : kpiRowPlain(t)), tabsBar(active, t), view);
+  const strip = CFG.inventory ? insightStrip() : "";
+  if (isEntity) root.replaceChildren(banner, strip, tabsBar("", t), view);
+  else root.replaceChildren(banner, strip, ownPeriod ? "" : filterBar(), ownPeriod ? "" : (CFG.showTag ? kpiRow(t, rows) : kpiRowPlain(t)), tabsBar(active, t), view);
+}
+
+/* ---------- rotating insight line ---------- */
+let stripTimer = null;
+function insightList() {
+  const now = Date.now(), last30 = ALL.filter((r) => r.ts > now - 30 * DAY), a30 = agg(last30), out = [];
+  const wd = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], full = { Mon: "Monday", Tue: "Tuesday", Wed: "Wednesday", Thu: "Thursday", Fri: "Friday", Sat: "Saturday", Sun: "Sunday" };
+  const bought = ALL.filter((r) => r.purchased_at || r.purchase_date);
+  const byBuy = wd.map((d) => ({ d, ...agg(bought.filter((r) => nyWeekday.format(new Date(r.purchased_at || r.purchase_date + "T12:00:00")) === d)) })).filter((b) => b.n >= 10 && b.roi != null).sort((x, y) => y.roi - x.roi);
+  if (byBuy.length >= 2) {
+    out.push(["Best day to buy", `Tickets bought on a ${full[byBuy[0].d]} returned ${sp(byBuy[0].roi, 1)} on average.`, "up"]);
+    const w = byBuy[byBuy.length - 1]; out.push(["Weakest day to buy", `${full[w.d]} purchases averaged ${sp(w.roi, 1)} ROI.`, w.roi < 0 ? "down" : "meh"]);
+  }
+  const top = groupBy(last30, (r) => r.artist).filter((g) => g.n >= 3).sort((x, y) => y.roi - x.roi)[0];
+  if (top) out.push(["Top artist, last 30 days", `${top.key}: ${plural(top.n, "sale")} at ${sp(top.roi, 1)} ROI.`, "up"]);
+  if (a30.n) out.push(["Last 30 days", `${fmtPct(a30.winRate, 0)} of ${plural(a30.n, "sale")} made money (${a30.wins} won, ${a30.losses} lost).`, a30.winRate >= 70 ? "up" : "meh"]);
+  const sold = wd.map((d) => ({ d, ...agg(ALL.filter((r) => nyWeekday.format(new Date(r.ts)) === d)) })).sort((x, y) => y.n - x.n)[0];
+  if (sold && sold.n) out.push(["Busiest selling day", `Most of your sales land on ${full[sold.d]} (${plural(sold.n, "sale")} all time).`, ""]);
+  const hold = holdings();
+  if (hold) {
+    const soon = [...hold.values()].reduce((x, g) => ({ n: x.n + g.soon, c: x.c + g.soonCost }), { n: 0, c: 0 });
+    if (soon.n) out.push(["Price to move", `${plural(soon.n, "ticket")} (${money(soon.c)} at cost) are for shows in the next 7 days.`, "meh"]);
+    const tm = teamMap();
+    const hot = [...hold.values()].map((g) => ({ g, t: tm.get(lc(g.key)) })).filter((x) => x.t && x.t.sales >= 3).sort((x, y) => y.t.sales - x.t.sales)[0];
+    if (hot) out.push(["Team is selling", `The company sold ${plural(hot.t.sales, "order")} of ${hot.g.key} this week at ${money(Number(hot.t.avg_sold_per))} a ticket. You hold ${plural(hot.g.left, "ticket")}.`, "up"]);
+  }
+  return out;
+}
+function insightStrip() {
+  clearInterval(stripTimer);
+  const items = insightList(); if (!items.length) return "";
+  let i = (UI.stripIndex || 0) % items.length;
+  const lbl = h("b"), txt = h("span"), count = h("span", { class: "muted" });
+  const show = () => { const [l, t, c] = items[i]; lbl.textContent = l; lbl.className = c; txt.textContent = t; count.textContent = `${i + 1}/${items.length}`; UI.stripIndex = i; };
+  const step = (n) => { i = (i + n + items.length) % items.length; show(); };
+  const el = h("div", { class: "insight-strip", role: "status", "aria-live": "polite" }, lbl, txt, h("span", { class: "spacer" }), count,
+    h("button", { type: "button", class: "icon", "aria-label": "Previous insight", text: "◀", onclick: () => step(-1) }),
+    h("button", { type: "button", class: "icon", "aria-label": "Next insight", text: "▶", onclick: () => step(1) }));
+  show();
+  if (!matchMedia("(prefers-reduced-motion: reduce)").matches) stripTimer = setInterval(() => { if (!el.isConnected) return clearInterval(stripTimer); if (!el.matches(":hover")) step(1); }, 7000);
+  return el;
 }
 
 function filterBar() {
@@ -184,21 +260,46 @@ function filterBar() {
   };
   const q = h("input", { type: "search", id: "f-q", placeholder: "Artist, venue, order #…", value: F.q });
   let qt; q.oninput = () => { clearTimeout(qt); qt = setTimeout(() => { F.q = q.value.trim(); UI.filtersTouched = true; UI.salesPage = 0; paint(); document.getElementById("f-q")?.focus(); }, 350); };
-  const presets = [["month", "This month"], ["30d", "Last 30 days"], ["year", "This year"], ["all", "All time"]];
+  const presets = [["month", "Month"], ["yearpick", "Year"], ["30d", "Last 30 days"], ["all", "All time"], ["custom", "Custom dates"]];
   const anyFilter = UI.filtersTouched;
-  const activeCount = [F.artist, F.venue, F.account, F.result, F.q].filter(Boolean).length + (F.preset === "custom" ? 1 : 0);
+  const activeCount = [F.artist, F.venue, F.account, F.q].filter(Boolean).length + (F.preset === "custom" ? 1 : 0);
+  const go = (fn) => () => { fn(); if (F.preset !== "custom") [F.from, F.to] = presetRange(F.preset); UI.filtersTouched = true; UI.salesPage = 0; paint(); };
+  const curM = todayISO().slice(0, 7), curY = curM.slice(0, 4);
+  const shiftMonth = (k, n) => { const [y, m] = k.split("-").map(Number); const d = new Date(y, m - 1 + n, 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; };
+  let stepper = "";
+  if (F.preset === "month") {
+    const k = F.monthKey || curM, recent = Array.from({ length: 6 }, (_, i) => shiftMonth(curM, -i)).reverse();
+    stepper = h("div", { class: "stepper" },
+      h("button", { type: "button", class: "icon", "aria-label": "Previous month", text: "◀", onclick: go(() => (F.monthKey = shiftMonth(k, -1))) }),
+      h("b", { class: "step-label", text: monthLabel(k, true) }),
+      h("button", { type: "button", class: "icon", "aria-label": "Next month", text: "▶", disabled: k >= curM, onclick: go(() => (F.monthKey = shiftMonth(k, 1))) }),
+      h("span", { class: "month-pills" }, recent.map((m) => h("button", { type: "button", class: m === k ? "on" : "", text: monthLabel(m), onclick: go(() => (F.monthKey = m)) }))));
+  } else if (F.preset === "yearpick") {
+    const y = F.yearKey || curY;
+    stepper = h("div", { class: "stepper" },
+      h("button", { type: "button", class: "icon", "aria-label": "Previous year", text: "◀", onclick: go(() => (F.yearKey = String(Number(y) - 1))) }),
+      h("b", { class: "step-label", text: y }),
+      h("button", { type: "button", class: "icon", "aria-label": "Next year", text: "▶", disabled: y >= curY, onclick: go(() => (F.yearKey = String(Number(y) + 1))) }));
+  }
+  // sale-type chips, counted on everything else you've filtered
+  const saved = F.type; F.type = ""; const base = filtered(); F.type = saved;
+  const counts = Object.fromEntries(TYPES.map(([k]) => [k, 0])); base.forEach((r) => counts[r.type]++);
+  const typeChips = h("div", { class: "type-chips", role: "group", "aria-label": "Sale type" },
+    h("button", { type: "button", class: !F.type ? "on" : "", onclick: go(() => (F.type = "")) }, "All ", h("span", { class: "n", text: fmtInt(base.length) })),
+    TYPES.map(([k, label]) => h("button", { type: "button", class: `t-${k} ${F.type === k ? "on" : ""}`, disabled: !counts[k] && F.type !== k, onclick: go(() => (F.type = F.type === k ? "" : k)) }, `${label} `, h("span", { class: "n", text: fmtInt(counts[k]) }))));
   return h("div", {},
     h("button", { type: "button", class: "filter-toggle", "aria-expanded": String(!!UI.filtersOpen), onclick: () => { UI.filtersOpen = !UI.filtersOpen; paint(); } }, `Filters${activeCount ? ` (${activeCount})` : ""}`),
     h("div", { class: `filters ${UI.filtersOpen ? "open" : ""}` },
-      date("f-from", "Sold from", "from"), date("f-to", "Sold to", "to"),
+      F.preset === "custom" ? [date("f-from", "Sold from", "from"), date("f-to", "Sold to", "to")] : "",
       sel("f-artist", "Artist / event", "artist", uniq("artist"), "All artists"),
       sel("f-venue", "Venue", "venue", uniq("venue"), "All venues"),
       sel("f-acct", "Buyer account", "account", uniq("account"), "All accounts"),
-      sel("f-res", "Result", "result", [["win", "All profitable"], ["ehh", "Ehh (small profit)"], ["even", "Break-even ($0)"], ["loss", "Losses"]], "Wins and losses"),
       h("div", { class: "f" }, h("label", { for: "f-q", text: "Search" }), q)),
     h("div", { class: "presets" },
-      presets.map(([k, label]) => h("button", { type: "button", class: `preset ${F.preset === k ? "on" : ""}`, text: label, onclick: () => { F.preset = k; [F.from, F.to] = presetRange(k); UI.filtersTouched = true; paint(); } })),
-      anyFilter ? h("button", { type: "button", class: "preset", text: "Reset filters", title: "Show all sales again. Nothing is deleted.", onclick: () => { Object.assign(F, { preset: "all", from: "", to: "", artist: "", venue: "", account: "", result: "", q: "" }); UI.filtersTouched = false; paint(); } }) : ""));
+      presets.map(([k, label]) => h("button", { type: "button", class: `preset ${F.preset === k ? "on" : ""}`, text: label, onclick: k === "custom" ? () => { F.preset = "custom"; UI.filtersOpen = true; UI.filtersTouched = true; paint(); } : go(() => (F.preset = k)) })),
+      stepper,
+      anyFilter ? h("button", { type: "button", class: "preset", text: "Reset filters", title: "Show all sales again. Nothing is deleted.", onclick: () => { Object.assign(F, { preset: "all", from: "", to: "", artist: "", venue: "", account: "", result: "", type: "", q: "", monthKey: "", yearKey: "" }); UI.filtersTouched = false; paint(); } }) : ""),
+    typeChips);
 }
 
 function kpiRow(t) {
@@ -291,6 +392,7 @@ const TABVIEWS = {
     };
     const markets = groupBy(rows, (r) => r.marketplace).sort((a, b) => b.profit - a.profit);
     return h("div", { class: "stack" },
+      CFG.inventory ? stillToSell() : "",
       h("div", { class: "grid g-2" }, card("Revenue and profit by month", chart, legend([["Revenue", "var(--series-1)"], ["Profit", "var(--series-2)"], ["Running profit", "#9ec5f4"]])),
         card("Where you sold", markets.length ? table([["key", "Marketplace", ""], ["n", "Sales", "r"], ["profit", "Profit", "r", (g) => h("span", { class: cls(g.profit), text: sm(g.profit) })], ["roi", "Avg ROI", "r", (g) => h("span", { class: cls(g.roi), text: sp(g.roi) })]], markets) : empty("No marketplace info yet."))),
       h("div", { class: "grid g-2e" }, card("Top artists by profit", topTable("artist", groupBy(rows, (r) => r.artist)), h("a", { class: "btn icon", href: `#${CFG.base}/artists` }, "All artists")),
@@ -384,6 +486,21 @@ const TABVIEWS = {
 
 function whenText(r) { return new Date(r.ts).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); }
 
+/* ---------- what you still hold, and what it should make ---------- */
+function stillToSell() {
+  const hold = holdings();
+  if (!hold || !hold.size) return "";
+  const gs = [...hold.values()], left = gs.reduce((a, g) => a + g.left, 0), cost = gs.reduce((a, g) => a + g.cost, 0);
+  const exp = gs.reduce((a, g) => a + g.exp, 0), expCost = gs.reduce((a, g) => a + g.expCost, 0);
+  const soon = gs.reduce((a, g) => a + g.soon, 0);
+  const hide = !UI.tagVisible, kpi = (label, value, foot, c = "") => h("div", { class: "kpi" }, h("div", { class: "lbl", text: label }), h("div", { class: `v ${c}`, text: value }), h("div", { class: "f", text: foot }));
+  return h("div", { class: "kpis four" },
+    kpi("Still to sell", fmtInt(left), `${plural(hold.size, "artist")} with upcoming shows`),
+    kpi("Money tied up", money(cost), "What those tickets cost you"),
+    kpi("Expected profit", hide ? "••••••" : sm(exp), expCost ? `${sp((exp / expCost) * 100, 1)} expected ROI on ${money(expCost)} with history` : "No sales history yet", hide ? "masked" : cls(exp)),
+    kpi("Shows in the next 7 days", fmtInt(soon), soon ? "Tickets to price and move" : "Nothing urgent", soon ? "meh" : ""));
+}
+
 /* ---------- artists / venues list ---------- */
 function trendOf(rs) {
   const now = Date.now(), a = rs.filter((r) => r.ts > now - 30 * DAY), b = rs.filter((r) => r.ts <= now - 30 * DAY && r.ts > now - 60 * DAY);
@@ -392,14 +509,17 @@ function trendOf(rs) {
   return pa >= pb ? { dir: 1, text: "Up" } : { dir: -1, text: "Down" };
 }
 function entityList(kind, rows) {
-  const groups = groupBy(rows, (r) => r[kind]).map((g) => ({ ...g, trend: trendOf(g.rows), avgCost: g.tickets ? g.cost / g.tickets : null }));
+  const held = kind === "artist" ? holdings() : null;
+  const groups = groupBy(rows, (r) => r[kind]).map((g) => ({ ...g, trend: trendOf(g.rows), avgCost: g.tickets ? g.cost / g.tickets : null, left: held ? held.get(lc(g.key))?.left || 0 : null }));
   const q = h("input", { type: "search", placeholder: `Find ${KIND[kind][2]}`, value: UI.entQ, style: { maxWidth: "260px" } });
   let qt; q.oninput = () => { clearTimeout(qt); qt = setTimeout(() => { UI.entQ = q.value.trim(); paint(); }, 300); };
   const list = sortRows(groups.filter((g) => !UI.entQ || g.key.toLowerCase().includes(UI.entQ.toLowerCase())), UI.entSort);
   const max = Math.max(1, ...list.map((g) => Math.abs(g.profit)));
+  const hold = kind === "artist" ? holdings() : null;
+  const leftCol = hold ? [["left", "Left", "r", (g) => (g.left ? h("b", { text: fmtInt(g.left), title: "Unsold tickets for upcoming shows" }) : h("span", { class: "muted", text: "—" }))]] : [];
   return card(`${KIND[kind][1]} · ${fmtInt(list.length)}`, table([
     ["key", KIND[kind][0], "", (g) => entityLink(kind, g.key)],
-    ["n", "Sales", "r"], ["tickets", "Tickets", "r"], ["revenue", "Revenue", "r", (g) => money(g.revenue)],
+    ["n", "Sales", "r"], ["tickets", "Tickets", "r"], ...leftCol, ["revenue", "Revenue", "r", (g) => money(g.revenue)],
     ["profit", "Profit", "r", (g) => h("div", {}, h("span", { class: cls(g.profit), text: sm(g.profit) }), h("div", { class: "mini-bar" }, h("i", { class: g.profit < 0 ? "down" : "", style: { width: `${(Math.abs(g.profit) / max) * 100}%` } })))],
     ["roi", "Avg ROI", "r", (g) => h("span", { class: cls(g.roi), text: sp(g.roi) })],
     ["winRate", "Win rate", "r", (g) => fmtPct(g.winRate, 0)],
@@ -594,6 +714,26 @@ function monthView() {
     : h("div", { class: "kpis two" }, big(`Profit · ${period}`, sm(t.profit), cls(t.profit), latest ? `Through ${asOf} ET` : "No sales"),
         big("Gross sales", money(t.revenue), "", `Cost ${money(t.cost)}`));
 
+  // profit goals for the month (your book only)
+  let goals = "";
+  if (CFG.showTag && !isAll) {
+    const dim = daysInMonth(key), dayNow = isCurrent ? Number(nyDay.format(new Date()).slice(8)) : dim, daysLeft = dim - dayNow;
+    const steps = [...new Set([10000, 25000, 50000, 75000, 100000, UI.goal].filter((v) => v > 0))].sort((a, b) => a - b);
+    const next = steps.find((g) => g > t.profit), pace = dayNow ? (t.profit / dayNow) * dim : 0;
+    const max = Math.max(next || steps[steps.length - 1], t.profit, 1);
+    const bar = h("div", { class: "goal-bar", role: "img", "aria-label": hide ? "Goal progress hidden" : `TAG ${sm(t.profit)} of ${money(next || max)}` },
+      h("i", { style: { width: hide ? "0%" : `${Math.max(0, Math.min(100, (t.profit / max) * 100))}%` } }),
+      steps.filter((g) => g <= max).map((g) => h("span", { class: `mark ${t.profit >= g && !hide ? "hit" : ""} ${g === UI.goal ? "mine" : ""}`, style: { left: `${(g / max) * 100}%` }, title: money(g) }, h("em", { text: `$${g >= 1000 ? g / 1000 + "k" : g}` }))));
+    const goalIn = h("input", { type: "number", id: "goal-in", min: "0", step: "500", value: UI.goal ? String(UI.goal) : "", placeholder: "Your own goal", style: { width: "130px" } });
+    goalIn.onchange = async () => { UI.goal = Math.max(0, Number(goalIn.value) || 0); const p = await loadPrefs(); p.goal = UI.goal; savePrefs(); paint(); };
+    const lines = hide ? [h("li", { text: "Tap Show numbers to see your progress." })] : [
+      steps.filter((g) => t.profit >= g).length ? h("li", {}, "Reached: ", h("b", { text: steps.filter((g) => t.profit >= g).map((g) => money(g)).join(", ") }), ".") : "",
+      next ? h("li", {}, h("b", { text: money(next - t.profit) }), ` more TAG to reach ${money(next)}` + (isCurrent && daysLeft > 0 ? `, about ${money((next - t.profit) / daysLeft)} a day for the ${plural(daysLeft, "day")} left.` : ".")) : h("li", { text: "Every goal reached this month." }),
+      isCurrent ? h("li", {}, "On pace for ", h("b", { class: cls(pace), text: sm(pace) }), (() => { const hit = steps.filter((g) => pace >= g).pop(); return hit ? `, which clears ${money(hit)}.` : "."; })()) : "",
+    ];
+    goals = card("Profit goals", h("div", {}, bar, h("ul", { class: "summary mt" }, lines)), h("div", { class: "row" }, h("label", { for: "goal-in", class: "inline-lbl", text: "Own goal $" }), goalIn), "Milestones at $10k, $25k, $50k, $75k and $100k of monthly TAG, plus your own goal if you set one.");
+  }
+
   // plain-English summary (one month only)
   let summary = "", trend = "";
   if (!isAll) {
@@ -648,7 +788,7 @@ function monthView() {
   const book = card("Month by month", table(cols, [...byMonth, { key: "all", ...agg(pool) }], { rowClass: (g) => (g.key === key ? "best" : g.key === "all" ? "total" : "") }), null, "Click a month to open it.");
 
   return h("div", { class: "stack" },
-    h("div", { class: "row" }, controls), head,
+    h("div", { class: "row" }, controls), head, goals,
     isAll ? "" : h("div", { class: "grid g-2" }, summary, trend),
     h("div", { class: "grid g-tag" }, totals, book));
 }

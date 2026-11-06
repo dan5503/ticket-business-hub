@@ -255,7 +255,9 @@ th .arrow { color: var(--accent); font-size: 9px; }
 .calc-out .kpi .v { font-size: 18px; }
 
 /* ---------- older shared pieces (inventory, discord, sites) ---------- */
-.headline, .headline.inv { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.headline { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.headline.inv { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
+@media (max-width: 1100px) { .headline.inv { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 900px) { .headline, .headline.inv { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .stat { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 12px 14px; min-width: 0; display: flex; flex-direction: column; }
 .stat .label { font-family: var(--mono); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
@@ -358,3 +360,38 @@ tr.total td { border-top: 1px solid var(--line-2); font-weight: 700; background:
 
 .kpis.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 @media (max-width: 640px) { .kpis.two { grid-template-columns: 1fr; } }
+
+/* ---------- period stepper, sale-type chips ---------- */
+.stepper { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-left: 6px; }
+.stepper .icon { min-height: 26px; padding: 0 8px; font-size: 10px; }
+.step-label { font-family: var(--mono); font-size: 12.5px; min-width: 120px; text-align: center; }
+.month-pills { display: inline-flex; gap: 4px; flex-wrap: wrap; margin-left: 4px; }
+.month-pills button { min-height: 24px; padding: 1px 9px; font-size: 11px; border-radius: 99px; background: transparent; color: var(--muted); border-color: var(--line-2); }
+.month-pills button.on { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+.type-chips { display: flex; gap: 6px; flex-wrap: wrap; margin: -4px 0 12px; }
+.type-chips button { min-height: 26px; padding: 2px 10px; font-size: 11.5px; border-radius: 6px; background: transparent; color: var(--text); border-color: var(--line-2); }
+.type-chips button .n { font-family: var(--mono); color: var(--muted); font-size: 10.5px; }
+.type-chips button:disabled { opacity: .4; }
+.type-chips button.on { border-color: var(--accent); background: var(--accent-soft); }
+.type-chips .t-massive.on, .type-chips .t-fantastic.on, .type-chips .t-profitable.on { border-color: var(--up); background: var(--up-soft); }
+.type-chips .t-ehh.on, .type-chips .t-breakeven.on { border-color: var(--meh); background: var(--meh-soft); }
+.type-chips .t-loss.on { border-color: var(--down); background: var(--down-soft); }
+
+/* ---------- insight line ---------- */
+.insight-strip { display: flex; align-items: center; gap: 10px; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 6px; padding: 6px 8px 6px 12px; margin-bottom: 12px; font-size: 13px; min-width: 0; }
+.insight-strip > b { font-family: var(--mono); font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; white-space: nowrap; }
+.insight-strip > span:not(.spacer):not(.muted) { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.insight-strip .muted { font-family: var(--mono); font-size: 10.5px; }
+.insight-strip .icon { min-height: 24px; padding: 0 7px; font-size: 9px; }
+@media (max-width: 640px) { .insight-strip { flex-wrap: wrap; } .insight-strip > b { width: 100%; } }
+
+/* ---------- goals ---------- */
+.goal-bar { position: relative; height: 10px; border-radius: 5px; background: var(--line); margin: 6px 0 26px; }
+.goal-bar > i { display: block; height: 100%; border-radius: 5px; background: var(--up); }
+.goal-bar .mark { position: absolute; top: -3px; width: 2px; height: 16px; background: var(--line-2); transform: translateX(-1px); }
+.goal-bar .mark.hit { background: var(--up); }
+.goal-bar .mark.mine { background: var(--accent); }
+.goal-bar .mark em { position: absolute; top: 18px; left: 50%; transform: translateX(-50%); font-style: normal; font-family: var(--mono); font-size: 10px; color: var(--muted); white-space: nowrap; }
+.goal-bar .mark:last-child em { transform: translateX(-100%); }
+.kpis.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+@media (max-width: 900px) { .kpis.four { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
