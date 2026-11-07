@@ -419,3 +419,5 @@ button.code { min-height: 24px; padding: 1px 8px; font-family: var(--mono); font
 .signup-main { display: flex; gap: 12px; align-items: center; min-width: 0; }
 .signup.subscribed { opacity: .65; }
 .group-title { font-size: 12px; font-weight: 600; color: var(--muted); margin: 0 0 6px; }
+
+@media (max-width: 640px) { .seg { flex-wrap: wrap; max-width: 100%; border-radius: 10px; } }
