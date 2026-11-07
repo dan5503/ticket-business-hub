@@ -70,12 +70,12 @@ function applyMapping(det: ReturnType<typeof detect>, mapping?: Record<string, s
   return { ...det, map };
 }
 
-async function syncOwner(owner: string, force = false) {
+async function syncOwner(owner: string, force = false, csvFromExtension?: string) {
   const { data: src, error } = await admin.from("inventory_sources").select("*").eq("owner_id", owner).maybeSingle();
   if (error) throw error;
   if (!src) throw new UserError("No Google Sheet is connected yet.");
   try {
-    const csv = await fetchCsv(src.export_url);
+    const csv = csvFromExtension ?? await fetchCsv(src.export_url);
     const hash = await sha(csv + JSON.stringify(src.mapping || {}));
     if (!force && hash === src.last_hash) {
       await admin.from("inventory_sources").update({ last_checked_at: new Date().toISOString(), last_status: "ok", last_error: null }).eq("owner_id", owner);
@@ -107,7 +107,8 @@ Deno.serve(async (req) => {
     if (cronSecret) {
       const { data: ok } = await admin.rpc("check_cron_secret", { p_secret: cronSecret });
       if (!ok) return json(req, { error: "forbidden" }, 403);
-      const { data: srcs } = await admin.from("inventory_sources").select("owner_id").eq("enabled", true);
+      // sheets the Chrome extension delivers are skipped here; Google won't hand them to the server
+      const { data: srcs } = await admin.from("inventory_sources").select("owner_id").eq("enabled", true).eq("via_extension", false);
       const results = [];
       for (const s of srcs || []) {
         try { results.push({ owner: s.owner_id, ...(await syncOwner(s.owner_id)) }); }
@@ -116,12 +117,32 @@ Deno.serve(async (req) => {
       return json(req, { ran: results.length });
     }
 
+    const body = await req.json().catch(() => ({}));
+
+    // ---- Chrome extension delivering the sheet (signed in to Google as you) ----
+    if (body.action === "push") {
+      const { data: owner, error: ke } = await admin.rpc("owner_for_sync_key", { p_key: String(body.key || "") });
+      if (ke || !owner) return json(req, { error: "Invalid or revoked sync key" }, 401);
+      const stamp = { last_checked_at: new Date().toISOString(), via_extension: true };
+      if (body.error) {
+        await admin.from("inventory_sources").update({ ...stamp, last_status: "error", last_error: ("Chrome extension: " + String(body.error)).slice(0, 500) }).eq("owner_id", owner);
+        return json(req, { ok: true });
+      }
+      if (body.unchanged) {
+        await admin.from("inventory_sources").update({ ...stamp, last_status: "ok", last_error: null }).eq("owner_id", owner);
+        return json(req, { changed: false });
+      }
+      const csv = String(body.csv || "");
+      if (!csv || csv.length > 15_000_000) throw new UserError("The sheet was empty or over 15 MB.");
+      await admin.from("inventory_sources").update(stamp).eq("owner_id", owner);
+      return json(req, await syncOwner(owner as string, true, csv));
+    }
+
     // ---- signed-in owner ----
     const token = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
     const { data: u, error: ue } = await admin.auth.getUser(token);
     if (ue || !u?.user) return json(req, { error: "Please sign in again." }, 401);
     const owner = u.user.id;
-    const body = await req.json().catch(() => ({}));
 
     if (body.action === "preview") {
       const exportUrl = toExportUrl(String(body.url || ""));
@@ -138,7 +159,11 @@ Deno.serve(async (req) => {
         owner_id: owner, sheet_url: String(body.url).slice(0, 2000), export_url: exportUrl, mapping, enabled: true, last_hash: null,
       });
       if (error) throw error;
-      return json(req, await syncOwner(owner, true));
+      try { return json(req, await syncOwner(owner, true)); }
+      catch (e) {
+        if (e instanceof UserError && /wouldn't share|doesn't exist/.test(e.message)) return json(req, { saved: true, rows: 0, note: "Saved. Google won't share this sheet with the server, so your Chrome extension will pull it in the next 30 minutes." });
+        throw e;
+      }
     }
     if (body.action === "sync") return json(req, await syncOwner(owner, true));
     if (body.action === "disconnect") {

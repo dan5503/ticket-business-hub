@@ -399,3 +399,19 @@ tr.total td { border-top: 1px solid var(--line-2); font-weight: 700; background:
 .star.on { color: var(--meh); }
 .star:hover { color: var(--meh); }
 td .pill + .pill { margin-left: 4px; }
+
+/* ---------- deals & presales ---------- */
+.deal-list { display: grid; gap: 6px; }
+.deal { display: grid; grid-template-columns: 170px minmax(0, 1fr) auto; gap: 12px; align-items: start; padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; }
+.deal.pinned { border-color: var(--meh); }
+.deal.is-done { opacity: .55; }
+.deal-when { display: flex; flex-direction: column; gap: 3px; align-items: flex-start; font-size: 12.5px; }
+.deal-subject { font-weight: 600; font-size: 13.5px; overflow-wrap: anywhere; }
+.deal-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+.deal-actions { display: flex; gap: 6px; align-items: center; }
+.btn.small, button.small { min-height: 28px; padding: 2px 10px; font-size: 12px; }
+button.code { min-height: 24px; padding: 1px 8px; font-family: var(--mono); font-size: 12px; border-style: dashed; border-color: var(--accent); color: var(--accent); background: transparent; }
+.pill.k-presale { color: var(--accent); border-color: var(--accent); }
+.pill.k-onsale { color: var(--up); border-color: rgba(47,211,138,.45); }
+.pill.k-deal { color: var(--meh); border-color: rgba(242,184,75,.5); }
+@media (max-width: 760px) { .deal { grid-template-columns: minmax(0, 1fr); gap: 6px; } .deal-when { flex-direction: row; flex-wrap: wrap; align-items: center; } }

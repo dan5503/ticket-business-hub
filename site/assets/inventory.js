@@ -24,7 +24,7 @@ const ago = (iso) => {
 export async function renderInventory(root) {
   const [items, srcRes, team] = await Promise.all([
     fetchAll("inventory_outlook", COLS, "event_date"),
-    sb.from("inventory_sources").select("sheet_url,mapping,last_rows,last_synced_at,last_checked_at,last_status,last_error").maybeSingle(),
+    sb.from("inventory_sources").select("sheet_url,mapping,last_rows,last_synced_at,last_checked_at,last_status,last_error,via_extension").maybeSingle(),
     fetchAll("plt_artist_7d", "artist,sales,tickets,avg_sold_per,profit,roi,last_sold_at", "artist").catch(() => []),
   ]);
   const teamBy = new Map(team.map((t) => [(t.artist || "").trim().toLowerCase(), t]));
@@ -62,10 +62,19 @@ export async function renderInventory(root) {
         h("p", { class: "muted small mt", text: "The sheet must be shared as “Anyone with the link can view” (in Google Sheets: Share, then General access)." }));
     }
     const ok = source.last_status === "ok";
+    const hasExt = !!document.documentElement.dataset.hubExtension, viaExt = source.via_extension;
+    const askExtension = () => new Promise((resolve, reject) => {
+      const t = setTimeout(() => { removeEventListener("message", on); reject(new Error("The Chrome extension didn't answer. Reload this page and try again.")); }, 90000);
+      function on(e) { if (e.source !== window || e.data?.type !== "hub-sheet-sync-result") return; clearTimeout(t); removeEventListener("message", on); e.data.res.ok ? resolve(e.data.res.result || {}) : reject(new Error(e.data.res.error)); }
+      addEventListener("message", on); postMessage({ type: "hub-sheet-sync" }, location.origin);
+    });
     const syncBtn = h("button", { class: "primary", type: "button" }, "Sync now");
     syncBtn.onclick = async () => {
       syncBtn.disabled = true; syncBtn.textContent = "Syncing…";
-      try { const r = await callSheet({ action: "sync" }); toast(`Inventory updated: ${fmtInt(r.rows)} orders`, "ok"); reload(); }
+      try {
+        const r = hasExt ? await askExtension() : await callSheet({ action: "sync" });
+        toast(r.skipped || (r.rows != null ? `Inventory updated: ${fmtInt(r.rows)} orders` : "Inventory is up to date"), "ok"); reload();
+      }
       catch (e) { toast(e.message, "error"); reload(); }
     };
     const colsBtn = h("button", { type: "button" }, "Change columns");
@@ -84,8 +93,9 @@ export async function renderInventory(root) {
       h("div", { class: "status-line" },
         h("span", { class: `dot ${ok ? "good" : source.last_status ? "bad" : ""}` }),
         h("b", { text: ok ? "Connected and syncing" : source.last_status ? "Sync problem" : "Connected, waiting for the first sync" }),
-        h("span", { class: "muted", text: `Updates every 30 minutes. Last checked ${ago(source.last_checked_at)}${source.last_synced_at ? `, last change ${ago(source.last_synced_at)}` : ""}.` })),
+        h("span", { class: "muted", text: `${viaExt ? "Your Chrome extension pulls it every 30 minutes while Chrome is open." : "Updates every 30 minutes."} Last checked ${ago(source.last_checked_at)}${source.last_synced_at ? `, last change ${ago(source.last_synced_at)}` : ""}.` })),
       !ok && source.last_error ? h("p", { class: "msg error", text: source.last_error }) : "",
+      !ok && !viaExt && /share/i.test(source.last_error || "") ? h("p", { class: "small mt", text: hasExt ? "Not the sheet's admin? No problem: tap Sync now and your Chrome extension will download it using your Google sign-in." : "Not the sheet's admin? Install the latest Business Hub Chrome extension (Discord page) and it will download the sheet using your Google sign-in." }) : "",
       h("a", { class: "sheet-link mt", href: source.sheet_url, target: "_blank", rel: "noopener noreferrer", text: "Open the sheet in Google Sheets" }),
       h("div", { class: "row mt" }, syncBtn, colsBtn, h("span", { class: "spacer" }), discBtn));
   }
