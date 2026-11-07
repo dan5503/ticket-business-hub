@@ -80,20 +80,31 @@ export async function renderDeals(root) {
       list.length > UI.show ? h("button", { type: "button", class: "mt", text: `Show more (${list.length - UI.show} left)`, onclick: () => { UI.show += 60; paint(); } }) : "");
   }
 
-  // ---------- signup tracker ----------
+  // ---------- signup checklist ----------
+  const SIGNUP_EMAIL = "danielbehman+tix@primelioninc.com";
+  const CATS = { venue: "Venues you sell most", card: "Credit card & phone presales", alerts: "Presale alerts", marketplace: "Marketplace deals", promoter: "Promoters", artist: "Artists", other: "Other" };
+  async function setStatus(x, status) {
+    const { error } = await sb.from("deal_sources").update({ status, signed_up_at: status === "subscribed" ? new Date().toISOString() : null }).eq("id", x.id);
+    if (error) return toast(niceError(error), "error");
+    x.status = status; x.signed_up_at = status === "subscribed" ? new Date().toISOString() : null; trackerBox.replaceChildren(tracker());
+  }
+  const trackerBox = h("div");
   function tracker() {
-    const by = (st) => sources.filter((x) => x.status === st);
-    const STATUS = { subscribed: ["Signed up", "good"], needs_you: ["Needs you", "warn"], todo: ["Queued", ""], failed: ["Didn't work", "bad"], skipped: ["Skipped", ""] };
-    if (!sources.length) return h("p", { class: "muted", text: "The signup list will show here as places get added." });
-    const counts = h("div", { class: "row" }, Object.entries(STATUS).filter(([k]) => by(k).length).map(([k, [t, c]]) => h("span", { class: `pill ${c}`, text: `${t} ${by(k).length}` })));
-    const rows = [...sources].sort((a, b) => ["needs_you", "failed", "todo", "subscribed", "skipped"].indexOf(a.status) - ["needs_you", "failed", "todo", "subscribed", "skipped"].indexOf(b.status) || a.name.localeCompare(b.name));
-    return h("div", {}, counts, h("div", { class: "table-wrap mt" }, h("table", {},
-      h("thead", {}, h("tr", {}, ["Where", "Type", "Status", "Note"].map((t) => h("th", { scope: "col", text: t })))),
-      h("tbody", {}, rows.map((x) => h("tr", {},
-        h("td", {}, x.url ? h("a", { class: "link-like", href: x.url, target: "_blank", rel: "noopener noreferrer", text: x.name }) : x.name),
-        h("td", { class: "muted", text: x.category }),
-        h("td", {}, h("span", { class: `pill ${STATUS[x.status][1]}`, text: STATUS[x.status][0] }), x.signed_up_at ? h("span", { class: "sub", text: fmtDate(x.signed_up_at.slice(0, 10)) }) : ""),
-        h("td", { class: "small", text: x.note || "" })))))));
+    if (!sources.length) return h("p", { class: "muted", text: "No signups on the list yet." });
+    const open = sources.filter((x) => ["todo", "needs_you", "failed"].includes(x.status)), done = sources.filter((x) => x.status === "subscribed");
+    const copyEmail = h("button", { type: "button", class: "code", title: "Copy", onclick: async () => { try { await navigator.clipboard.writeText(SIGNUP_EMAIL); toast("Email copied", "ok"); } catch { toast("Couldn't copy", "error"); } } }, SIGNUP_EMAIL);
+    const row = (x) => h("div", { class: `signup ${x.status}` },
+      h("div", { class: "signup-main" },
+        x.url ? h("a", { class: "btn small primary", href: x.url, target: "_blank", rel: "noopener noreferrer", text: "Open ↗" }) : "",
+        h("div", {}, h("b", { text: x.name }), x.note ? h("div", { class: "muted small", text: x.note }) : "")),
+      x.status === "subscribed"
+        ? h("div", { class: "deal-actions" }, h("span", { class: "pill good", text: `Done${x.signed_up_at ? " " + fmtDate(x.signed_up_at.slice(0, 10)) : ""}` }), h("button", { type: "button", class: "small ghost", text: "Undo", onclick: () => setStatus(x, "todo") }))
+        : h("div", { class: "deal-actions" }, h("button", { type: "button", class: "small", text: "Signed up", onclick: () => setStatus(x, "subscribed") }), h("button", { type: "button", class: "small ghost", text: "Skip", onclick: () => setStatus(x, "skipped") })));
+    const groups = Object.keys(CATS).map((c) => [c, open.filter((x) => x.category === c)]).filter(([, l]) => l.length);
+    return h("div", {},
+      h("p", { class: "small" }, `${fmtInt(done.length)} of ${fmtInt(sources.filter((x) => x.status !== "skipped").length)} done. Sign up with `, copyEmail, " (tap to copy). It lands in your normal inbox and gets sorted automatically."),
+      groups.map(([c, l]) => h("div", { class: "mt" }, h("h3", { class: "group-title", text: `${CATS[c]} · ${l.length}` }), h("div", { class: "deal-list" }, l.map(row)))),
+      done.length ? h("details", { class: "mt" }, h("summary", { text: `Done (${done.length})` }), h("div", { class: "deal-list mt" }, done.map(row))) : "");
   }
 
   const card = (title, body, note) => h("section", { class: "card" }, h("div", { class: "card-head" }, h("h2", { class: "card-title", text: title })), body, note ? h("p", { class: "note-line", text: note }) : "");
@@ -104,6 +115,7 @@ export async function renderDeals(root) {
       h("p", { class: "sub", text: `Presale codes, on-sales and ticket deals pulled out of ${MAILBOX}.${upcoming ? ` ${upcoming === 1 ? "1 presale starts" : `${upcoming} presales start`} in the next 48 hours.` : ""}` }))),
     h("div", { class: "stack" },
       card("Inbox, sorted", listBox, "Sorted every couple of hours. Artists you hold tickets for are marked in yellow, ones you've sold in green. Tap a code to copy it."),
-      card("Newsletter signups", tracker(), "New signups use danielbehman+tix@primelioninc.com, which lands in the same inbox and is easy to sort.")));
+      card("Sign up for more presales", trackerBox, "Only places that aren't emailing you yet are listed. Live Nation, Ticketmaster, AEG, Goldenvoice, Bowery, AXS, SeatGeek, Bandsintown, MSG, Barclays, MetLife and others already are.")));
+  trackerBox.replaceChildren(tracker());
   paint();
 }
