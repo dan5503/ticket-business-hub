@@ -1,5 +1,6 @@
-// Spotify Charts: monthly listeners for the artists you deal in, plus who is climbing.
-// Data: kworb.net's public top-artists-by-monthly-listeners list, copied in once a day.
+// Social & Charts: where your artists stand across TikTok, Billboard, Spotify, Apple Music, YouTube, Shazam and iTunes,
+// plus Spotify monthly listeners for the artists you deal in and who is climbing.
+// Data: public charts copied in once a day (charts-sync) and kworb.net's Spotify monthly listeners (spotify-sync).
 import { sb, h, s, fetchAll, fmtMoney, fmtInt, fmtDate, toast, niceError, todayISO } from "./common.js";
 
 const compact = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
@@ -24,7 +25,40 @@ export function variants(name) {
   [n, head].forEach((v) => { const m = v.split(/ (?:and|&|\+|with|ft\.?|feat\.?|x) |, /); if (m.length > 1) add(m[0], 4); });
   return out;
 }
-const UI = { mine: "holding", climb: "day", q: "" };
+const UI = { mine: "holding", climb: "day", q: "", chart: "tiktok_us", chartN: 50 };
+
+// the charts we copy in; order = order of the buttons
+export const CHARTS = [
+  ["tiktok_us", "TikTok", "Songs trending on TikTok in the US, updated daily. The free list is the top 10.", "https://tokchart.com/tiktok-trending-songs/united-states", null],
+  ["billboard_hot100", "Billboard Hot 100", "The official US singles chart, updated weekly.", "https://www.billboard.com/charts/hot-100/", null],
+  ["billboard_artist100", "Billboard Artist 100", "The most popular artists in the US this week, all platforms combined.", "https://www.billboard.com/charts/artist-100/", null],
+  ["spotify_us", "Spotify", "Spotify's US daily top songs.", "https://kworb.net/spotify/country/us_daily.html", "Streams"],
+  ["apple_us", "Apple Music", "Apple Music's US top songs, updated through the day.", "https://kworb.net/charts/apple_s/us.html", null],
+  ["youtube_us", "YouTube", "YouTube's US top songs this week.", "https://kworb.net/youtube/insights/us.html", "Views"],
+  ["shazam_us", "Shazam", "What people in the US are looking up. Songs often show here before they hit the other charts.", "https://kworb.net/charts/shazam/us.html", null],
+  ["itunes_us", "iTunes", "Songs people are buying on iTunes in the US.", "https://kworb.net/charts/itunes/us.html", null],
+];
+const SHORT = { tiktok_us: "TikTok", billboard_hot100: "Hot 100", billboard_artist100: "Artist 100", spotify_us: "Spotify", apple_us: "Apple", youtube_us: "YouTube", shazam_us: "Shazam", itunes_us: "iTunes" };
+const key = (v) => lc(v).normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ");
+// "KAROL G, Judeline & rusowsky" + "(feat. Future)" -> each credited artist
+export function creditedArtists(artist, title) {
+  const out = [], add = (v) => { v = (v || "").trim(); if (v.length >= 2 && !out.includes(v)) out.push(v); };
+  if (!artist) return out;
+  add(artist);
+  artist.split(/\s*,\s*|\s+&\s+|\s+x\s+|\s+feat\.?\s+|\s+ft\.?\s+|\s+with\s+/i).forEach(add);
+  const f = (title || "").match(/\((?:feat\.?|ft\.?|with)\s+([^)]+)\)/i);
+  if (f) f[1].split(/\s*,\s*|\s+&\s+/).forEach(add);
+  return out;
+}
+async function loadCharts() {
+  const out = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await sb.from("chart_latest").select("chart,day,rank,title,artist,move,metric,extra").order("chart").order("rank").range(from, from + 999);
+    if (error) throw error;
+    out.push(...data); if (data.length < 1000) break;
+  }
+  return out;
+}
 
 function spark(points) {
   if (!points || points.length < 2) return h("span", { class: "muted small", text: "Building" });
@@ -38,11 +72,12 @@ function spark(points) {
 export async function renderSpotify(root) {
   const reload = () => renderSpotify(root);
   const today = todayISO();
-  const [sales, inv, watch, first] = await Promise.all([
+  const [sales, inv, watch, first, chartRows] = await Promise.all([
     fetchAll("sales", "artist,profit,total_cost,quantity", "artist"),
     fetchAll("inventory_outlook", "artist,discord_artist,event_date,remaining_qty,remaining_cost,expected_profit", "event_date").catch(() => []),
     sb.from("spotify_watch").select("spotify_id,name").then((r) => r.data || []),
     sb.from("spotify_history").select("day").order("day", { ascending: true }).limit(1).then((r) => r.data?.[0]?.day || null),
+    loadCharts().catch(() => []),
   ]);
   const days = first ? Math.round((Date.parse(today) - Date.parse(first)) / 86400000) + 1 : 0;
   const unlock = first ? new Date(Date.parse(first) + 7 * 86400000 + 43200000).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" }) : "";
@@ -165,22 +200,87 @@ export async function renderSpotify(root) {
     results.replaceChildren(list.length ? h("div", { class: "mt" }, table([["", "", followBtn], ["Artist", "", artistCell], ["Monthly listeners", "r num", (a) => big(a.listeners)], ["Today", "r num", (a) => change(a.daily_change, a.pct_1d)], ["You", "", yours]], list)) : h("p", { class: "muted mt", text: "No artist by that name in the top 27,500." }));
   }, 300); };
 
+  // ---------- charts across platforms ----------
+  const followNames = new Set(watch.map((w) => lc(w.name)));
+  const youOf = (name) => { const k = lc(name); return { h: hist.get(k), hold: hold.get(k), follow: followNames.has(k) }; };
+  const byChart = new Map(CHARTS.map(([c]) => [c, []]));
+  chartRows.forEach((r) => byChart.get(r.chart)?.push(r));
+  const chartDay = chartRows.reduce((m, r) => (r.day > m ? r.day : m), "");
+  // every artist credited on any chart, with their best spot on each
+  const people = new Map();
+  for (const r of chartRows) {
+    for (const a of creditedArtists(r.artist, r.title)) {
+      const k = key(a);
+      const p = people.get(k) || { name: a, k, spots: new Map(), songs: new Set() };
+      const cur = p.spots.get(r.chart);
+      if (!cur || r.rank < cur.rank) p.spots.set(r.chart, r);
+      if (r.chart !== "billboard_artist100") p.songs.add(key(r.title));
+      people.set(k, p);
+    }
+  }
+  // your artist names may be the Spotify spelling; match on the accent-free key
+  const yoursByKey = new Map();
+  for (const [k, v] of hist) yoursByKey.set(key(k), { ...(yoursByKey.get(key(k)) || {}), h: v });
+  for (const [k, v] of hold) yoursByKey.set(key(k), { ...(yoursByKey.get(key(k)) || {}), hold: v });
+  for (const n of followNames) yoursByKey.set(key(n), { ...(yoursByKey.get(key(n)) || {}), follow: true });
+  // a combined credit ("A, B & C") is only kept as its own row when it's an act you deal in or on the Artist 100
+  const combined = (n) => creditedArtists(n, "").length > 2;
+  const plist = [...people.values()].filter((p) => !combined(p.name) || yoursByKey.has(p.k) || p.spots.has("billboard_artist100")).map((p) => ({ ...p, ...(yoursByKey.get(p.k) || {}) }));
+  const order = new Map(CHARTS.map(([c], i) => [c, i]));
+  const spots = (p) => h("div", { class: "spots" }, [...p.spots.entries()].sort((a, b) => order.get(a[0]) - order.get(b[0])).map(([c, r]) =>
+    h("span", { class: `spot ${r.rank <= 10 ? "top" : ""}`, title: `${CHARTS[order.get(c)][1]} #${r.rank}${c === "billboard_artist100" ? "" : `: ${r.title}`}${r.move ? ` (${r.move})` : ""}` }, h("b", { text: SHORT[c] }), ` #${r.rank}`)));
+  const youPills = (a) => (a.h || a.hold ? yours({ h: a.h, hold: a.hold }) : "");
+  const followPill = (a) => (a.follow && !a.h && !a.hold ? h("span", { class: "pill", text: "Following" }) : "");
+  const score = (p) => p.spots.size * 1000 - [...p.spots.values()].reduce((t, r) => t + Math.min(r.rank, 200), 0) / 10;
+
+  const mineOnCharts = plist.filter((p) => p.h || p.hold || p.follow).sort((a, b) => (b.hold ? 1 : 0) - (a.hold ? 1 : 0) || score(b) - score(a));
+  const onChartsBody = chartRows.length ? (mineOnCharts.length
+    ? table([["Artist", "", (p) => h("b", { text: p.name })], ["Where they are", "", spots], ["You", "", (p) => h("div", {}, youPills(p), followPill(p))]], mineOnCharts.slice(0, 60))
+    : h("p", { class: "muted", text: "None of the artists you hold, sold or follow are on today's charts." }))
+    : h("p", { class: "muted", text: "Charts load every morning. Tap Refresh now to load them the first time." });
+
+  const hot = plist.filter((p) => p.spots.size >= 3).sort((a, b) => score(b) - score(a)).slice(0, 40);
+  const hotBody = hot.length ? table([["#", "r num", (p) => String(hot.indexOf(p) + 1)], ["Artist", "", (p) => h("b", { text: p.name })], ["Charts", "r num", (p) => String(p.spots.size)], ["Where they are", "", spots], ["You", "", (p) => h("div", {}, youPills(p), followPill(p))]], hot)
+    : h("p", { class: "muted", text: "Nothing yet. Charts load every morning." });
+
+  const chartBody = h("div");
+  function paintChart() {
+    const meta = CHARTS.find(([c]) => c === UI.chart) || CHARTS[0], [c, label, about, link, metricLbl] = meta;
+    const list = byChart.get(c) || [], isArtist = c === "billboard_artist100";
+    const seg = h("div", { class: "seg wrap", role: "group", "aria-label": "Chart" }, CHARTS.map(([k, t]) =>
+      h("button", { type: "button", class: UI.chart === k ? "on" : "", "aria-pressed": String(UI.chart === k), onclick: () => { UI.chart = k; UI.chartN = 50; paintChart(); } }, t)));
+    const mv = (r) => { const m = r.move || ""; return (/^(new|re)$/i.test(m) ? h("span", { class: "pill good", text: /new/i.test(m) ? "New" : "Back" }) : h("span", { class: /^\+/.test(m) ? "up" : /^-/.test(m) ? "down" : "muted", text: m === "=" ? "–" : m })); };
+    const you = (r) => { const hit = creditedArtists(r.artist, r.title).map((a) => yoursByKey.get(key(a))).filter(Boolean); if (!hit.length) return h("span", { class: "muted", text: "" }); const m = hit.reduce((o, x) => ({ h: o.h || x.h, hold: o.hold || x.hold, follow: o.follow || x.follow }), {}); return h("div", {}, youPills(m), followPill(m)); };
+    const cols = [["#", "r num", (r) => String(r.rank)], ["Move", "num", mv],
+      isArtist ? ["Artist", "", (r) => h("b", { text: r.title })] : ["Song", "", (r) => h("div", {}, h("b", { text: r.title }), h("span", { class: "sub", text: [r.artist, r.extra && c === "tiktok_us" ? r.extra : ""].filter(Boolean).join(" · ") }))],
+      ...(metricLbl ? [[metricLbl, "r num", (r) => big(r.metric)]] : []),
+      ["You", "", you]];
+    const shown = list.slice(0, UI.chartN);
+    const more = list.length > shown.length ? h("button", { type: "button", class: "mt", onclick: () => { UI.chartN += 50; paintChart(); } }, `Show more (${list.length - shown.length} left)`) : "";
+    chartBody.replaceChildren(h("div", { class: "row" }, seg),
+      h("p", { class: "muted small mt" }, about, list[0] ? ` As of ${fmtDate(list[0].day)}. ` : " ", h("a", { href: link, target: "_blank", rel: "noopener noreferrer", text: "Open the full chart ↗" })),
+      list.length ? h("div", { class: "mt" }, table(cols, shown), more) : h("p", { class: "muted mt", text: "This chart didn't load today. It will try again tomorrow morning." }));
+  }
+
   const refresh = h("button", { type: "button" }, "Refresh now");
   refresh.onclick = async () => {
     refresh.disabled = true; refresh.textContent = "Refreshing… (about 30 seconds)";
-    const { data, error } = await sb.functions.invoke("spotify-sync", { body: {} });
-    if (error) { refresh.disabled = false; refresh.textContent = "Refresh now"; return toast("Couldn't refresh. Try again in a minute.", "error"); }
-    toast(`Updated ${fmtInt(data.artists)} artists`, "ok"); reload();
+    const [a, b] = await Promise.all([sb.functions.invoke("spotify-sync", { body: {} }), sb.functions.invoke("charts-sync", { body: {} })]);
+    if (a.error && b.error) { refresh.disabled = false; refresh.textContent = "Refresh now"; return toast("Couldn't refresh. Try again in a minute.", "error"); }
+    toast(`Updated ${b.data ? Object.keys(b.data.charts || {}).length + " charts" : ""}${a.data ? `${b.data ? " and " : ""}${fmtInt(a.data.artists)} Spotify artists` : ""}`, "ok"); reload();
   };
   const card = (title, body, note) => h("section", { class: "card" }, h("div", { class: "card-head" }, h("h2", { class: "card-title", text: title })), body, note ? h("p", { class: "note-line", text: note }) : "");
 
   root.replaceChildren(
     h("div", { class: "page-head" },
-      h("div", {}, h("h1", { text: "Spotify Charts" }), h("p", { class: "sub", text: `Monthly listeners for the artists you deal in, and who is climbing. ${updated ? `Updated ${fmtDate(updated)}.` : ""} Refreshes every morning.` })),
+      h("div", {}, h("h1", { text: "Social & Charts" }), h("p", { class: "sub", text: `Where your artists stand on TikTok, Billboard, Spotify, Apple Music, YouTube, Shazam and iTunes. ${chartDay ? `Charts from ${fmtDate(chartDay)}.` : ""} Refreshes every morning.` })),
       h("span", { class: "spacer" }), refresh),
     h("div", { class: "stack" },
-      card("Your artists", mineBody, days < 8 ? `7-day change fills in after a week of daily snapshots (day ${days} of 8); 30-day after a month. Today's change is live now.` : "Monthly listeners is Spotify's 28-day count of unique listeners."),
-      card("Climbing", climbBody, "Artists gaining listeners fast often sell better. ★ follows an artist so it stays in Your artists."),
-      card("Find an artist", h("div", {}, search, results))));
-  paintMine(); paintClimb();
+      card("Your artists on the charts", onChartsBody, "Artists you hold tickets for, have sold, or follow, and their best spot on each chart today. Hover a spot for the song."),
+      card("Hot across platforms", hotBody, "Artists on 3 or more charts at once. Showing up everywhere at the same time is a strong demand signal."),
+      card("Top charts", chartBody, "Instagram doesn't publish a public music chart. Its trending Reels audio is only shown inside the Instagram app."),
+      card("Spotify: your artists' listeners", mineBody, days < 8 ? `7-day change fills in after a week of daily snapshots (day ${days} of 8); 30-day after a month. Today's change is live now.` : "Monthly listeners is Spotify's 28-day count of unique listeners."),
+      card("Spotify: climbing", climbBody, "Artists gaining listeners fast often sell better. ★ follows an artist so it stays in Your artists."),
+      card("Find an artist on Spotify", h("div", {}, search, results))));
+  paintMine(); paintClimb(); paintChart();
 }
