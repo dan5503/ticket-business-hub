@@ -222,58 +222,6 @@ export async function renderInventory(root) {
     if (ADD.p === "lastmonth") { const d = new Date(m + "-01T12:00:00Z"); d.setUTCMonth(d.getUTCMonth() - 1); const lm = d.toISOString().slice(0, 7); return [lm + "-01", addDays(m + "-01", -1)]; }
     return [ADD.from || addDays(today, -6), ADD.to || today];
   }
-  function added() {
-    const box = h("div");
-    const paint = () => {
-      const [from, to] = addedRange();
-      const rows = items.filter((p) => p.purchase_date && p.purchase_date >= from && p.purchase_date <= to);
-      const days = new Map();
-      rows.forEach((p) => { const g = days.get(p.purchase_date) || []; g.push(p); days.set(p.purchase_date, g); });
-      const span = Math.round((Date.parse(to) - Date.parse(from)) / 86400000) + 1;
-      // chart: one bar per day (per week when the range is long)
-      const weekly = span > 62, buckets = [];
-      for (let d = from; d <= to; d = addDays(d, weekly ? 7 : 1)) {
-        const end = weekly ? (addDays(d, 6) < to ? addDays(d, 6) : to) : d;
-        const r = rows.filter((p) => p.purchase_date >= d && p.purchase_date <= end);
-        buckets.push({ d, end, cost: sum(r, "total_cost"), tix: sum(r, "quantity"), n: r.length });
-      }
-      const seg = h("div", { class: "seg", role: "group", "aria-label": "Period" }, [["today", "Today"], ["7d", "Last 7 days"], ["30d", "Last 30 days"], ["month", "This month"], ["lastmonth", "Last month"], ["custom", "Custom"]]
-        .map(([k, t]) => h("button", { type: "button", class: ADD.p === k ? "on" : "", onclick: () => { ADD.p = k; if (k === "custom" && !ADD.from) [ADD.from, ADD.to] = [addDays(today, -13), today]; paint(); } }, t)));
-      const dateIn = (key, label) => { const el = h("input", { type: "date", value: ADD[key], "aria-label": label, max: today }); el.onchange = () => { ADD[key] = el.value; paint(); }; return h("label", { class: "inline-lbl" }, label + " ", el); };
-      const stat = (label, value, foot) => h("div", { class: "kpi" }, h("div", { class: "lbl", text: label }), h("div", { class: "v", text: value }), foot ? h("div", { class: "f", text: foot }) : "");
-      const stillLeft = rows.filter((p) => p.remaining_qty > 0);
-      const topArtists = [...rows.reduce((m, p) => m.set(p.artist || "Unknown", (m.get(p.artist || "Unknown") || 0) + Number(p.total_cost || 0)), new Map())].sort((a, b) => b[1] - a[1]).slice(0, 3);
-      box.replaceChildren(
-        h("div", { class: "row" }, seg, ADD.p === "custom" ? [dateIn("from", "From"), dateIn("to", "To")] : ""),
-        h("div", { class: "kpis four mt" },
-          stat("Orders added", fmtInt(rows.length), `${dayLabel.format(new Date(from + "T12:00:00Z"))} to ${dayLabel.format(new Date(to + "T12:00:00Z"))}`),
-          stat("Tickets bought", fmtInt(sum(rows, "quantity")), `${fmtInt(sum(stillLeft, "remaining_qty"))} still unsold`),
-          stat("Money spent", fmtMoney(sum(rows, "total_cost")), rows.length ? `${fmtMoney(sum(rows, "total_cost") / Math.max(1, sum(rows, "quantity")))} a ticket on average` : ""),
-          stat("Most bought", topArtists[0] ? topArtists[0][0] : "—", topArtists.slice(0, 3).map(([a, c]) => `${a.length > 22 ? a.slice(0, 21) + "…" : a} ${fmtMoney(c)}`).join(" · "))),
-        span > 1 && rows.length ? h("div", { class: "mt" }, barChart({
-          label: "Money spent on new inventory", height: 180,
-          labels: buckets.map((b) => dayLabel.format(new Date(b.d + "T12:00:00Z")).replace(/^\w+, /, "")),
-          titles: buckets.map((b) => weekly ? `Week of ${dayLabel.format(new Date(b.d + "T12:00:00Z"))}` : dayLabel.format(new Date(b.d + "T12:00:00Z"))),
-          series: [{ name: "Spent", values: buckets.map((b) => b.cost), color: "var(--accent)" }],
-          tip: (i) => [["Spent", fmtMoney(buckets[i].cost)], ["Tickets", fmtInt(buckets[i].tix)], ["Orders", fmtInt(buckets[i].n)]],
-        })) : "",
-        rows.length ? h("div", { class: "mt" }, [...days.keys()].sort().reverse().map((d) => {
-          const g = days.get(d);
-          return h("div", { class: "day-group" },
-            h("div", { class: "day-head" }, h("b", { text: dayLabel.format(new Date(d + "T12:00:00Z")) }),
-              h("span", { class: "muted small", text: `${g.length} order${g.length === 1 ? "" : "s"} · ${fmtInt(sum(g, "quantity"))} tickets · ${fmtMoney(sum(g, "total_cost"))}` })),
-            h("div", { class: "table-wrap" }, h("table", {}, h("tbody", {}, g.sort((a, b) => Number(b.total_cost || 0) - Number(a.total_cost || 0)).map((p) => h("tr", {},
-              h("td", { class: "strong", text: p.artist || "—" }), h("td", { class: "num", text: fmtDate(p.event_date) }), h("td", { text: p.venue || "—" }),
-              h("td", { text: [p.section, p.row_name].filter(Boolean).join(" · ") || "—" }),
-              h("td", { class: "r num", text: `${fmtInt(p.quantity)} tix` }), h("td", { class: "r num", text: fmtMoney(Number(p.total_cost || 0), true) }),
-              h("td", { class: "r" }, p.remaining_qty === 0 && p.quantity > 0 ? h("span", { class: "pill good", text: "Sold out" }) : p.sold_qty > 0 ? h("span", { class: "pill meh", text: `${p.remaining_qty} left` }) : h("span", { class: "muted small", text: "Unsold" })),
-              h("td", { class: "muted small", text: p.account || "" })))))));
-        })) : h("p", { class: "muted mt", text: "No new inventory in this period." }));
-    };
-    paint();
-    return box;
-  }
-
   // ---------- table ----------
   let show = "all", q = "";
   // default: every order, newest purchase first
@@ -315,12 +263,54 @@ export async function renderInventory(root) {
       bought_month: ["Month bought", (p) => (p.purchase_date || "").slice(0, 7), (k) => (k ? new Date(k + "-15T12:00:00Z").toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" }) : "No purchase date")],
       event_date: ["Show date", (p) => p.event_date, (k) => (k ? dayLabel.format(new Date(k + "T12:00:00Z")) : "No show date")],
       artist: ["Artist", (p) => p.artist, (k) => k || "Unknown"], venue: ["Venue", (p) => p.venue, (k) => k || "Unknown"], account: ["Account", (p) => p.account, (k) => k || "No account"] };
+    let period = "all", limit = 500;
+    const summary = h("div");
+    function paintSummary(l) {
+      if (!TF.boughtFrom && !TF.boughtTo) return summary.replaceChildren();
+      const dated = l.filter((p) => p.purchase_date);
+      const from = TF.boughtFrom || dated.reduce((m, p) => (p.purchase_date < m ? p.purchase_date : m), today);
+      const to = TF.boughtTo || today;
+      const span = Math.max(1, Math.round((Date.parse(to) - Date.parse(from)) / 86400000) + 1), weekly = span > 62, buckets = [];
+      for (let d = from; d <= to && buckets.length < 400; d = addDays(d, weekly ? 7 : 1)) {
+        const end = weekly ? (addDays(d, 6) < to ? addDays(d, 6) : to) : d;
+        const r = dated.filter((p) => p.purchase_date >= d && p.purchase_date <= end);
+        buckets.push({ d, cost: sum(r, "total_cost"), tix: sum(r, "quantity"), n: r.length });
+      }
+      const stat = (label, value, foot) => h("div", { class: "kpi" }, h("div", { class: "lbl", text: label }), h("div", { class: "v", text: value }), foot ? h("div", { class: "f", text: foot }) : "");
+      const top = [...l.reduce((m, p) => m.set(p.artist || "Unknown", (m.get(p.artist || "Unknown") || 0) + Number(p.total_cost || 0)), new Map())].sort((a, b) => b[1] - a[1]).slice(0, 3);
+      const fmtD = (d) => dayLabel.format(new Date(d + "T12:00:00Z"));
+      summary.replaceChildren(
+        h("div", { class: "kpis four mt" },
+          stat("Orders bought", fmtInt(l.length), `${fmtD(from)} to ${fmtD(to)}`),
+          stat("Tickets bought", fmtInt(sum(l, "quantity")), `${fmtInt(sum(l, "remaining_qty"))} still unsold`),
+          stat("Money spent", fmtMoney(sum(l, "total_cost")), l.length ? `${fmtMoney(sum(l, "total_cost") / Math.max(1, sum(l, "quantity")))} a ticket on average` : ""),
+          stat("Most bought", top[0] ? top[0][0] : "—", top.map(([a, c]) => `${a.length > 22 ? a.slice(0, 21) + "…" : a} ${fmtMoney(c)}`).join(" · "))),
+        span > 1 && l.length ? h("div", { class: "mt" }, barChart({
+          label: "Money spent per day", height: 170,
+          labels: buckets.map((b) => fmtD(b.d).replace(/^\w+, /, "")),
+          titles: buckets.map((b) => (weekly ? `Week of ${fmtD(b.d)}` : fmtD(b.d))),
+          series: [{ name: "Spent", values: buckets.map((b) => b.cost), color: "var(--accent)" }],
+          tip: (i) => [["Spent", fmtMoney(buckets[i].cost)], ["Tickets", fmtInt(buckets[i].tix)], ["Orders", fmtInt(buckets[i].n)]],
+        })) : "");
+    }
+    const PERIODS = [["all", "All time"], ["today", "Today"], ["7d", "Last 7 days"], ["30d", "Last 30 days"], ["month", "This month"], ["lastmonth", "Last month"], ["custom", "Custom"]];
+    const periodSeg = h("div", { class: "seg", role: "group", "aria-label": "Bought in" });
+    const SORTS = [["purchase_date:-1", "Newest purchase first"], ["purchase_date:1", "Oldest purchase first"], ["event_date:1", "Show date, soonest first"], ["event_date:-1", "Show date, latest first"]];
+    const sortSel = h("select", { "aria-label": "Sort", class: "auto-w" }, SORTS.map(([v, t]) => h("option", { value: v, text: t })), h("option", { value: "other", text: "Sorted by a column", hidden: true }));
+    sortSel.onchange = () => { const [k, d] = sortSel.value.split(":"); TF.sort = k; TF.dir = Number(d); limit = 500; paint(); };
+    const viewSeg = h("div", { class: "seg", role: "group", "aria-label": "View" });
     function paint() {
       const l = list();
+      periodSeg.replaceChildren(...PERIODS.map(([k, t]) => h("button", { type: "button", class: period === k ? "on" : "", onclick: () => setPeriod(k) }, t)));
+      viewSeg.replaceChildren(...[["", "List"], ["purchase_date", "Day by day"], ["event_date", "By show date"]].map(([g, t]) => h("button", { type: "button", class: TF.group === g ? "on" : "", onclick: () => { TF.group = g; groupSel.value = g; paint(); } }, t)));
+      const sv = `${TF.sort}:${TF.dir}`; sortSel.value = SORTS.some(([v]) => v === sv) ? sv : "other";
+      boughtInputs.style.display = period === "custom" ? "" : "none";
+      paintSummary(l);
+      more.replaceChildren(l.length > limit ? h("button", { type: "button", text: `Show ${fmtInt(Math.min(500, l.length - limit))} more (${fmtInt(l.length - limit)} not shown)`, onclick: () => { limit += 500; paint(); } }) : "");
       [...chips.children].forEach((b) => b.classList.toggle("on", b.dataset.v === show));
       count.textContent = `${fmtInt(l.length)} orders · ${fmtInt(sum(l, show === "sold" ? "sold_qty" : "remaining_qty"))} tickets`;
       [...thead.querySelectorAll("th")].forEach((th) => { const on = th.dataset.k === TF.sort; th.classList.toggle("sorted", on); th.setAttribute("aria-sort", on ? (TF.dir > 0 ? "ascending" : "descending") : "none"); th.querySelector(".arrow").textContent = on ? (TF.dir > 0 ? " ▲" : " ▼") : ""; });
-      const shown = l.slice(0, 500);
+      const shown = l.slice(0, limit);
       if (!TF.group) return tbody.replaceChildren(...shown.map(rowOf));
       const [, keyOf, labelOf] = GROUPS[TF.group], groups = new Map();
       shown.forEach((p) => { const k = keyOf(p) || ""; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(p); });
@@ -339,7 +329,20 @@ export async function renderInventory(root) {
     const dateF = (key, label) => { const el = h("input", { type: "date", value: TF[key], "aria-label": label }); el.onchange = () => { TF[key] = el.value; paint(); }; return h("label", { class: "inline-lbl" }, label + " ", el); };
     const groupSel = h("select", { "aria-label": "Group by", class: "auto-w" }, h("option", { value: "", text: "No grouping" }), Object.entries(GROUPS).map(([k, [t]]) => h("option", { value: k, text: `Group by ${t.toLowerCase()}` })));
     groupSel.value = TF.group; groupSel.onchange = () => { TF.group = groupSel.value; paint(); };
-    const clearBtn = h("button", { type: "button", class: "ghost small", text: "Clear dates", onclick: () => { Object.assign(TF, { boughtFrom: "", boughtTo: "", showFrom: "", showTo: "" }); root.querySelectorAll(".inv-dates input").forEach((i) => (i.value = "")); paint(); } });
+    const more = h("div", { class: "mt" });
+    const bfIn = h("input", { type: "date", "aria-label": "Bought from" }), btIn = h("input", { type: "date", "aria-label": "Bought to" });
+    bfIn.onchange = () => { TF.boughtFrom = bfIn.value; period = "custom"; paint(); };
+    btIn.onchange = () => { TF.boughtTo = btIn.value; period = "custom"; paint(); };
+    const boughtInputs = h("span", { class: "row inline" }, h("label", { class: "inline-lbl" }, "Bought from ", bfIn), h("label", { class: "inline-lbl" }, "to ", btIn));
+    function setPeriod(k) {
+      period = k; limit = 500;
+      if (k === "all") TF.boughtFrom = TF.boughtTo = "";
+      else if (k === "custom") { if (!TF.boughtFrom) { TF.boughtFrom = addDays(today, -13); TF.boughtTo = today; } }
+      else { ADD.p = k; [TF.boughtFrom, TF.boughtTo] = addedRange(); }
+      bfIn.value = TF.boughtFrom; btIn.value = TF.boughtTo;
+      paint();
+    }
+    const clearBtn = h("button", { type: "button", class: "ghost small", text: "Clear show dates", onclick: () => { TF.showFrom = TF.showTo = ""; root.querySelectorAll(".show-dates input").forEach((i) => (i.value = "")); paint(); } });
     [["all", "All inventory"], ["upcoming", "On hand"], ["sold", "Sold"], ["past", "Past shows, not sold"], ["undated", "No show date"]].forEach(([v, t]) =>
       chips.append(h("button", { type: "button", "data-v": v, text: t, onclick: () => { show = v; paint(); } })));
     paint();
@@ -347,17 +350,18 @@ export async function renderInventory(root) {
     return h("div", {},
       h("div", { class: "row" }, chips, count, h("span", { class: "spacer" }), h("div", { style: { minWidth: "220px", flex: "1 1 220px", maxWidth: "360px" } }, search),
         h("button", { type: "button", onclick: () => exportCsv(cols, list(), "inventory") }, "Download CSV")),
-      h("div", { class: "row mt inv-dates" }, dateF("boughtFrom", "Bought from"), dateF("boughtTo", "to"), dateF("showFrom", "Show from"), dateF("showTo", "to"), clearBtn, h("span", { class: "spacer" }), groupSel),
+      h("div", { class: "row mt inv-dates" }, h("span", { class: "muted small", text: "Bought:" }), periodSeg, boughtInputs),
+      summary,
+      h("div", { class: "row mt inv-dates show-dates" }, viewSeg, sortSel, h("span", { class: "spacer" }), dateF("showFrom", "Show from"), dateF("showTo", "to"), clearBtn, groupSel),
       h("div", { class: "table-wrap mt" }, h("table", {}, thead, tbody)),
-      list().length > 500 ? h("p", { class: "muted small mt", text: "Showing the first 500. Search to narrow it down." }) : "");
+      more);
   }
 
-  const board = await makeBoard("inventory", ["sheet", "overview", "added", "tied", "table", "csv"], {
+  const board = await makeBoard("inventory", ["sheet", "overview", "tied", "table", "csv"], {
     sheet: { title: "Google Sheet", collapsed: false, render: sheetPanel },
     overview: { title: "Overview", bare: true, render: overview },
-    added: { title: "New inventory", hint: "Orders by the date you bought them (the purchase date in your sheet).", render: added },
     tied: { title: "Where your money is tied up", hint: "Upcoming shows only. Expected profit uses the ROI you actually got on the same show, or on that artist when the show hasn't sold yet. Team shows what PLT sold of that artist in the last 7 days. It's a signal only and never added to your numbers.", render: tiedUp },
-    table: { title: "Your tickets", hint: "Sales come off automatically: each order shows how many tickets you bought, how many sold on Discord (matched by order #), and how many are left.", render: table },
+    table: { title: "Your tickets", hint: "Every order, newest purchase first. Pick a period to see what you bought and spent, switch to Day by day, or sort by show date. Sales come off automatically (matched by order #).", render: table },
     csv: { title: "Upload a file instead", collapsed: true, render: csvPanel },
   });
   root.replaceChildren(
