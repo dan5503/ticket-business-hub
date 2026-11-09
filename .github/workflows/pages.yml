@@ -20,6 +20,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
+      - name: Stamp asset versions so phones and browsers never run old code
+        run: |
+          V=${GITHUB_SHA::8}
+          sed -i -E "s#(from \"\./[a-z0-9_-]+\.js)\"#\1?v=$V\"#g; s#(import\(\"\./[a-z0-9_-]+\.js)\"#\1?v=$V\"#g" site/assets/*.js
+          sed -i -E "s#(src|href)=\"(assets/[a-z0-9_/.-]+\.(js|css)|config\.js)\"#\1=\"\2?v=$V\"#g" site/*.html
+          grep -c "?v=$V" site/app.html site/assets/app.js
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
