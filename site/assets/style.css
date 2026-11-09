@@ -421,3 +421,11 @@ button.code { min-height: 24px; padding: 1px 8px; font-family: var(--mono); font
 .group-title { font-size: 12px; font-weight: 600; color: var(--muted); margin: 0 0 6px; }
 
 @media (max-width: 640px) { .seg { flex-wrap: wrap; max-width: 100%; border-radius: 10px; } }
+.day-group { margin-top: 12px; }
+.day-head { display: flex; gap: 10px; align-items: baseline; padding: 4px 2px 6px; border-bottom: 1px solid var(--line); margin-bottom: 4px; }
+tr.group-row td { background: var(--panel-2, rgba(255,255,255,.03)); padding-top: 10px; }
+th.sortable { cursor: pointer; user-select: none; }
+th.sortable:hover, th.sorted { color: var(--text); }
+.inv-dates input[type=date] { width: auto; min-height: 30px; padding: 2px 6px; }
+
+select.auto-w { width: auto; min-width: 200px; }
