@@ -718,20 +718,26 @@ function monthView() {
   let goals = "";
   if (CFG.showTag && !isAll) {
     const dim = daysInMonth(key), dayNow = isCurrent ? Number(nyDay.format(new Date()).slice(8)) : dim, daysLeft = dim - dayNow;
-    const steps = [...new Set([10000, 25000, 50000, 75000, 100000, UI.goal].filter((v) => v > 0))].sort((a, b) => a - b);
+    const custom = UI.goal > 0;
+    const steps = custom ? [UI.goal] : [10000, 25000, 50000, 75000, 100000];
     const next = steps.find((g) => g > t.profit), pace = dayNow ? (t.profit / dayNow) * dim : 0;
     const max = Math.max(next || steps[steps.length - 1], t.profit, 1);
     const bar = h("div", { class: "goal-bar", role: "img", "aria-label": hide ? "Goal progress hidden" : `TAG ${sm(t.profit)} of ${money(next || max)}` },
       h("i", { style: { width: hide ? "0%" : `${Math.max(0, Math.min(100, (t.profit / max) * 100))}%` } }),
       steps.filter((g) => g <= max).map((g) => h("span", { class: `mark ${t.profit >= g && !hide ? "hit" : ""} ${g === UI.goal ? "mine" : ""}`, style: { left: `${(g / max) * 100}%` }, title: money(g) }, h("em", { text: `$${g >= 1000 ? g / 1000 + "k" : g}` }))));
-    const goalIn = h("input", { type: "number", id: "goal-in", min: "0", step: "500", value: UI.goal ? String(UI.goal) : "", placeholder: "Your own goal", style: { width: "130px" } });
-    goalIn.onchange = async () => { UI.goal = Math.max(0, Number(goalIn.value) || 0); const p = await loadPrefs(); p.goal = UI.goal; savePrefs(); paint(); };
+    const goalIn = h("input", { type: "text", inputmode: "numeric", id: "goal-in", value: custom ? String(UI.goal) : "", placeholder: "e.g. 40000", style: { width: "130px" } });
+    const saveGoal = async (v) => { UI.goal = Math.max(0, Math.round(v) || 0); const p = await loadPrefs(); p.goal = UI.goal; savePrefs(); paint(); };
+    const setBtn = h("button", { class: "btn primary", type: "button", text: custom ? "Update goal" : "Set goal" });
+    setBtn.onclick = () => { const v = Number(String(goalIn.value).replace(/[^0-9.]/g, "")); if (v > 0) saveGoal(v); else goalIn.focus(); };
+    goalIn.onkeydown = (e) => { if (e.key === "Enter") setBtn.onclick(); };
+    const resetBtn = custom ? h("button", { class: "btn", type: "button", text: "Use default milestones" }) : "";
+    if (resetBtn) resetBtn.onclick = () => saveGoal(0);
     const lines = hide ? [h("li", { text: "Tap Show numbers to see your progress." })] : [
       steps.filter((g) => t.profit >= g).length ? h("li", {}, "Reached: ", h("b", { text: steps.filter((g) => t.profit >= g).map((g) => money(g)).join(", ") }), ".") : "",
       next ? h("li", {}, h("b", { text: money(next - t.profit) }), ` more TAG to reach ${money(next)}` + (isCurrent && daysLeft > 0 ? `, about ${money((next - t.profit) / daysLeft)} a day for the ${plural(daysLeft, "day")} left.` : ".")) : h("li", { text: "Every goal reached this month." }),
       isCurrent ? h("li", {}, "On pace for ", h("b", { class: cls(pace), text: sm(pace) }), (() => { const hit = steps.filter((g) => pace >= g).pop(); return hit ? `, which clears ${money(hit)}.` : "."; })()) : "",
     ];
-    goals = card("Profit goals", h("div", {}, bar, h("ul", { class: "summary mt" }, lines)), h("div", { class: "row" }, h("label", { for: "goal-in", class: "inline-lbl", text: "Own goal $" }), goalIn), "Milestones at $10k, $25k, $50k, $75k and $100k of monthly TAG, plus your own goal if you set one.");
+    goals = card("Profit goals", h("div", {}, bar, h("ul", { class: "summary mt" }, lines)), h("div", { class: "row" }, h("label", { for: "goal-in", class: "inline-lbl", text: "My goal $" }), goalIn, setBtn, resetBtn), custom ? `Your monthly TAG goal: ${money(UI.goal)}. It replaces the default milestones.` : "Default milestones at $10k, $25k, $50k, $75k and $100k of monthly TAG. Set your own goal to replace them.");
   }
 
   // plain-English summary (one month only)
