@@ -446,3 +446,15 @@ select.auto-w { width: auto; min-width: 200px; }
 .spot.top { border-color: rgba(47,211,138,.45); color: var(--up); }
 .spot.top b { color: var(--up); }
 .muted.small, p.small { font-size: 12px; }
+
+/* movable cards on every page */
+.card-head > .mover.arr { margin-left: auto; opacity: .55; transition: opacity .15s; }
+.card:hover > .card-head > .mover.arr, .card:focus-within > .card-head > .mover.arr { opacity: 1; }
+@media (hover: none) { .card-head > .mover.arr { opacity: 1; } }
+.card-head > .mover.arr .mv { min-height: 22px; padding: 0 6px; font-size: 12px; }
+.card.dragging, .grid.dragging { opacity: .5; }
+.card.drop-before, .grid.drop-before { box-shadow: 0 -3px 0 var(--accent); }
+.card.drop-after, .grid.drop-after { box-shadow: 0 3px 0 var(--accent); }
+.cat-row { display: flex; align-items: center; gap: 8px; margin: 16px 0 8px; }
+.cat-row .cat-title { margin: 0; }
+.mover.arr .mv { min-height: 22px; padding: 0 6px; font-size: 12px; }

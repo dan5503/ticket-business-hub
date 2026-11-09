@@ -1,6 +1,7 @@
 // Deals & Presales: presale codes, on-sales and ticket deals pulled out of danielbehman@primelioninc.com,
 // plus the newsletter signup tracker.
 import { sb, h, fetchAll, fmtInt, fmtDate, toast, niceError, todayISO } from "./common.js";
+import { arrange } from "./layout.js";
 
 const MAILBOX = "danielbehman@primelioninc.com";
 const UI = { tab: "presale", show: 60 };
@@ -118,4 +119,5 @@ export async function renderDeals(root) {
       card("Sign up for more presales", trackerBox, "Only places that aren't emailing you yet are listed. Live Nation, Ticketmaster, AEG, Goldenvoice, Bowery, AXS, SeatGeek, Bandsintown, MSG, Barclays, MetLife and others already are.")));
   trackerBox.replaceChildren(tracker());
   paint();
+  arrange(root, "deals");
 }

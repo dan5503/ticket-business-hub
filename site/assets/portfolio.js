@@ -2,7 +2,7 @@
 import { sb, h, fetchAll, fmtMoney, fmtInt, fmtPct, fmtDate, monthLabel, todayISO } from "./common.js";
 import { barChart, lineChart, legend } from "./charts.js";
 import { exportCsv } from "./dashboard.js";
-import { loadPrefs, savePrefs } from "./layout.js";
+import { loadPrefs, savePrefs, arrange } from "./layout.js";
 
 const COLS = "id,discord_message_id,order_number,artist,venue,city,event_date,section,row_name,quantity,total_sale,total_cost,profit,roi,cost_per,sold_per,purchase_date,purchased_at,sold_date,sold_at,account,marketplace,result,created_at";
 export const MY_TABS = [["month", "TAG & Month"], ["recent", "Day · 3 days · Week"], ["overview", "Overview"], ["sales", "Sales"], ["artists", "Artists"], ["venues", "Venues"], ["insights", "Buy insights"], ["buying", "Buy timing"], ["losses", "Losses"]];
@@ -202,6 +202,7 @@ function paint() {
   const strip = CFG.inventory ? insightStrip() : "";
   if (isEntity) root.replaceChildren(banner, strip, tabsBar("", t), view);
   else root.replaceChildren(banner, strip, ownPeriod ? "" : filterBar(), ownPeriod ? "" : (CFG.showTag ? kpiRow(t, rows) : kpiRowPlain(t)), tabsBar(active, t), view);
+  arrange(root, `${CFG.base}/${isEntity ? tab : active}`);
 }
 
 /* ---------- rotating insight line ---------- */

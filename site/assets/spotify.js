@@ -2,6 +2,7 @@
 // plus Spotify monthly listeners for the artists you deal in and who is climbing.
 // Data: public charts copied in once a day (charts-sync) and kworb.net's Spotify monthly listeners (spotify-sync).
 import { sb, h, s, fetchAll, fmtMoney, fmtInt, fmtDate, toast, niceError, todayISO } from "./common.js";
+import { arrange } from "./layout.js";
 
 const compact = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
 const big = (v) => (v == null ? "—" : compact.format(v));
@@ -335,4 +336,5 @@ export async function renderSpotify(root) {
       card("Spotify: climbing", climbBody, "Artists gaining listeners fast often sell better. ★ follows an artist so it stays in Your artists."),
       card("Find an artist on Spotify", h("div", {}, search, results))));
   paintMine(); paintClimb(); paintChart();
+  arrange(root, "social");
 }

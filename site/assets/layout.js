@@ -128,3 +128,108 @@ export async function makeBoard(pageKey, defaultOrder, sections) {
     open(id) { if (page.collapsed[id]) { page.collapsed[id] = false; savePrefs(); panels[id].paint(); } panels[id].el.scrollIntoView({ behavior: "smooth", block: "start" }); },
   };
 }
+
+/* ---------- arrange: make the cards on any page movable ----------
+ * Works on pages built from plain .card boxes. Every direct child of the page (or of a .stack inside it)
+ * that is a card, or a .grid row of cards, becomes movable with ↑ ↓ and drag; cards that sit side by side
+ * in a row also get ← → to swap places. Order is saved per page to your account.
+ */
+const MONTHS = /\b(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\b/g;
+const cardKey = (c) => (c.dataset.moveKey || c.querySelector(":scope > .card-head .card-title")?.textContent || "")
+  .toLowerCase().replace(MONTHS, "").replace(/[^a-z ]/g, " ").replace(/\s+/g, " ").trim();
+const isCard = (el) => el.matches?.("section.card, div.card") && !el.classList.contains("empty") && !!cardKey(el);
+const gridCards = (g) => [...g.children].filter(isCard);
+const blocksOf = (c) => [...c.children].filter((el) => isCard(el) || (el.classList.contains("grid") && gridCards(el).length > 0));
+const blockKey = (b) => (b.classList.contains("grid") ? "row:" + gridCards(b).map(cardKey).sort().join("|") : cardKey(b));
+let dragBlock = null;
+
+export async function arrange(scope, pageKey) {
+  if (!scope) return;
+  const prefs = await loadPrefs();
+  const store = (prefs.arrange ||= {});
+  const containers = [scope, ...scope.querySelectorAll(".stack")].filter((c, i, a) => a.indexOf(c) === i && blocksOf(c).length >= 2);
+  containers.forEach((c, ci) => setupContainer(c, `${pageKey}#${ci}`, store));
+}
+
+function setupContainer(c, key, store) {
+  const saved = (store[key] ||= { order: [], inner: {} });
+  const persist = () => savePrefs();
+
+  function apply() {
+    let blocks = blocksOf(c);
+    // rows: put their cards in the saved order
+    blocks.filter((b) => b.classList.contains("grid")).forEach((g) => {
+      const want = saved.inner[blockKey(g)];
+      if (!want) return;
+      const cards = gridCards(g), pos = (x) => { const i = want.indexOf(cardKey(x)); return i < 0 ? 999 : i; };
+      const marks = cards.map((x) => { const m = document.createComment(""); x.before(m); return m; });
+      [...cards].sort((a, b) => pos(a) - pos(b)).forEach((x, i) => marks[i].after(x));
+      marks.forEach((m) => m.remove());
+    });
+    // blocks: saved order first, new ones keep their default place
+    const keys = blocks.map(blockKey), known = saved.order.filter((k) => keys.includes(k));
+    const order = [...known]; keys.forEach((k, i) => { if (!order.includes(k)) order.splice(Math.min(i, order.length), 0, k); });
+    const byKey = new Map(blocks.map((b) => [blockKey(b), b]));
+    const marks = blocks.map((b) => { const m = document.createComment(""); b.before(m); return m; });
+    order.forEach((k, i) => marks[i].after(byKey.get(k)));
+    marks.forEach((m) => m.remove());
+    blocks = blocksOf(c);
+    saved.order = blocks.map(blockKey);
+    blocks.forEach((b, i) => {
+      const inRow = b.classList.contains("grid");
+      (inRow ? gridCards(b) : [b]).forEach((card, j, row) => controls(card, b, i, blocks.length, inRow ? j : -1, row.length));
+    });
+  }
+
+  function moveBlock(b, dir) {
+    const blocks = blocksOf(c), i = blocks.indexOf(b), j = i + dir;
+    if (j < 0 || j >= blocks.length) return;
+    const keys = blocks.map(blockKey); [keys[i], keys[j]] = [keys[j], keys[i]];
+    saved.order = keys; persist(); apply();
+  }
+  function moveInRow(g, card, dir) {
+    const keys = gridCards(g).map(cardKey), i = keys.indexOf(cardKey(card)), j = i + dir;
+    if (j < 0 || j >= keys.length) return;
+    [keys[i], keys[j]] = [keys[j], keys[i]];
+    const oldKey = blockKey(g); saved.inner[oldKey] = keys; persist(); apply();
+  }
+
+  function controls(card, block, i, n, j, rowLen) {
+    const head = card.querySelector(":scope > .card-head");
+    if (!head) return;
+    head.querySelector(":scope > .mover.arr")?.remove();
+    const t = cardKey(card);
+    const btn = (txt, label, dis, fn) => { const b = h("button", { type: "button", class: "mv", title: label, "aria-label": `${label}: ${t}`, disabled: dis }, txt); b.onclick = fn; return b; };
+    const handle = h("button", { type: "button", class: "handle", title: "Drag to move", "aria-label": `Drag ${t}` }, "⋮⋮");
+    const box = h("div", { class: "mover arr" },
+      j >= 0 ? btn("←", "Move left", j === 0, () => moveInRow(block, card, -1)) : "",
+      j >= 0 ? btn("→", "Move right", j === rowLen - 1, () => moveInRow(block, card, +1)) : "",
+      btn("↑", "Move up", i === 0, () => moveBlock(block, -1)),
+      btn("↓", "Move down", i === n - 1, () => moveBlock(block, +1)), handle);
+    head.append(box);
+    handle.onmousedown = () => (block.draggable = true);
+    handle.ontouchstart = () => (block.draggable = true);
+  }
+
+  if (!c.dataset.arranged) {
+    c.dataset.arranged = "1";
+    c.addEventListener("dragstart", (e) => { const b = blocksOf(c).find((x) => x === e.target); if (!b) return; dragBlock = b; b.classList.add("dragging"); e.dataTransfer.effectAllowed = "move"; try { e.dataTransfer.setData("text/plain", "x"); } catch {} });
+    c.addEventListener("dragend", () => { if (dragBlock) { dragBlock.draggable = false; dragBlock.classList.remove("dragging"); } dragBlock = null; c.querySelectorAll(".drop-before,.drop-after").forEach((n) => n.classList.remove("drop-before", "drop-after")); });
+    const target = (e) => blocksOf(c).find((b) => b.contains(e.target));
+    c.addEventListener("dragover", (e) => {
+      const b = target(e); if (!dragBlock || !b || b === dragBlock) return;
+      e.preventDefault();
+      const r = b.getBoundingClientRect(), after = e.clientY > r.top + r.height / 2;
+      blocksOf(c).forEach((x) => x.classList.remove("drop-before", "drop-after"));
+      b.classList.add(after ? "drop-after" : "drop-before");
+    });
+    c.addEventListener("drop", (e) => {
+      const b = target(e); if (!dragBlock || !b || b === dragBlock) return;
+      e.preventDefault();
+      const after = b.classList.contains("drop-after"), keys = blocksOf(c).map(blockKey).filter((k) => k !== blockKey(dragBlock));
+      keys.splice(keys.indexOf(blockKey(b)) + (after ? 1 : 0), 0, blockKey(dragBlock));
+      saved.order = keys; persist(); apply();
+    });
+  }
+  apply();
+}

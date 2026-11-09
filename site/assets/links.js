@@ -1,4 +1,5 @@
 import { sb, h, toast, modal, copyText, niceError } from "./common.js";
+import { loadPrefs, savePrefs } from "./layout.js";
 
 const COLS = "id,title,url,category,description,icon,sort_order,has_login";
 const revealCache = new Map(); // id -> {username,password,at}
@@ -17,6 +18,8 @@ async function reveal(id) {
 export async function renderLinks(root) {
   const { data: links, error } = await sb.from("hub_links").select(COLS).order("category").order("sort_order").order("title");
   if (error) throw error;
+  const prefs = await loadPrefs();
+  const lp = (prefs.links ||= { cats: [] });
   let q = "";
   const search = h("input", { type: "search", placeholder: "Search sites…", "aria-label": "Search sites", class: "grow" });
   const listEl = h("div", {});
@@ -27,10 +30,35 @@ export async function renderLinks(root) {
     if (!links.length) { listEl.replaceChildren(h("div", { class: "card empty" }, h("h2", { text: "Add your first site" }), h("p", { text: "Save links to all your sites and tools, with optional logins that stay encrypted." }))); return; }
     const groups = new Map();
     shown.forEach((l) => { const k = l.category || "Other"; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(l); });
-    listEl.replaceChildren(...[...groups].flatMap(([cat, ls]) => [h("div", { class: "cat-title", text: cat }), h("div", { class: "cards" }, ls.map(card))]));
+    const cats = [...groups.keys()], pos = (c) => { const i = lp.cats.indexOf(c); return i < 0 ? 999 + cats.indexOf(c) : i; };
+    const ordered = [...groups].sort((a, b) => pos(a[0]) - pos(b[0]));
+    const moveCat = (cat, dir) => {
+      const list = ordered.map(([c]) => c), i = list.indexOf(cat), j = i + dir;
+      if (j < 0 || j >= list.length) return;
+      [list[i], list[j]] = [list[j], list[i]];
+      lp.cats = [...list, ...lp.cats.filter((c) => !list.includes(c))]; savePrefs(); paint();
+    };
+    listEl.replaceChildren(...ordered.flatMap(([cat, ls], i) => [
+      h("div", { class: "cat-row" }, h("div", { class: "cat-title", text: cat }), h("span", { class: "spacer" }),
+        q ? "" : h("div", { class: "mover arr" },
+          h("button", { type: "button", class: "mv", title: "Move group up", "aria-label": `Move ${cat} up`, disabled: i === 0, onclick: () => moveCat(cat, -1) }, "↑"),
+          h("button", { type: "button", class: "mv", title: "Move group down", "aria-label": `Move ${cat} down`, disabled: i === ordered.length - 1, onclick: () => moveCat(cat, +1) }, "↓"))),
+      h("div", { class: "cards" }, ls.map((l, j) => card(l, q ? null : { first: j === 0, last: j === ls.length - 1, move: (dir) => moveSite(ls, l, dir) })))]));
   }
 
-  function card(l) {
+  // swap two sites inside a group and save their order
+  async function moveSite(ls, l, dir) {
+    const i = ls.indexOf(l), j = i + dir;
+    if (j < 0 || j >= ls.length) return;
+    const list = [...ls]; [list[i], list[j]] = [list[j], list[i]];
+    list.forEach((x, k) => (x.sort_order = k));
+    links.sort((a, b) => (a.category || "").localeCompare(b.category || "") || a.sort_order - b.sort_order || a.title.localeCompare(b.title));
+    paint();
+    const res = await Promise.all(list.map((x, k) => sb.from("hub_links").update({ sort_order: k }).eq("id", x.id)));
+    if (res.some((r) => r.error)) toast("Couldn't save the new order", "error");
+  }
+
+  function card(l, mv) {
     let host = ""; try { host = new URL(l.url).hostname.replace(/^www\./, ""); } catch {}
     const credBox = l.has_login ? credentials(l) : null;
     return h("div", { class: "lcard" },
@@ -41,6 +69,9 @@ export async function renderLinks(root) {
       h("div", { class: "actions" },
         h("a", { class: "btn primary", href: l.url, target: "_blank", rel: "noopener noreferrer" }, "Open site"),
         h("span", { class: "spacer" }),
+        mv ? h("div", { class: "mover arr" },
+          h("button", { type: "button", class: "mv", title: "Move left", "aria-label": `Move ${l.title} left`, disabled: mv.first, onclick: () => mv.move(-1) }, "←"),
+          h("button", { type: "button", class: "mv", title: "Move right", "aria-label": `Move ${l.title} right`, disabled: mv.last, onclick: () => mv.move(+1) }, "→")) : "",
         h("button", { class: "ghost icon", type: "button", "aria-label": `Edit ${l.title}`, onclick: () => editLink(l) }, "Edit")));
   }
 
