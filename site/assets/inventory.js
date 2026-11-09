@@ -275,8 +275,9 @@ export async function renderInventory(root) {
   }
 
   // ---------- table ----------
-  let show = "upcoming", q = "";
-  const TF = { boughtFrom: "", boughtTo: "", showFrom: "", showTo: "", group: "", sort: "", dir: 1 };
+  let show = "all", q = "";
+  // default: every order, newest purchase first
+  const TF = { boughtFrom: "", boughtTo: "", showFrom: "", showTo: "", group: "", sort: "purchase_date", dir: -1 };
   function table() {
     const cols = [["artist", "Artist or event"], ["event_date", "Show date"], ["venue", "Venue"], ["section", "Section"], ["row_name", "Row"],
       ["quantity", "Bought"], ["sold_qty", "Sold"], ["remaining_qty", "Left"], ["cost_per", "Cost per"], ["remaining_cost", "Left at cost"], ["expected_profit", "Expected"], ["purchase_date", "Bought on"], ["account", "Account"], ["order_number", "Order #"]];
@@ -339,7 +340,7 @@ export async function renderInventory(root) {
     const groupSel = h("select", { "aria-label": "Group by", class: "auto-w" }, h("option", { value: "", text: "No grouping" }), Object.entries(GROUPS).map(([k, [t]]) => h("option", { value: k, text: `Group by ${t.toLowerCase()}` })));
     groupSel.value = TF.group; groupSel.onchange = () => { TF.group = groupSel.value; paint(); };
     const clearBtn = h("button", { type: "button", class: "ghost small", text: "Clear dates", onclick: () => { Object.assign(TF, { boughtFrom: "", boughtTo: "", showFrom: "", showTo: "" }); root.querySelectorAll(".inv-dates input").forEach((i) => (i.value = "")); paint(); } });
-    [["upcoming", "On hand"], ["sold", "Sold"], ["past", "Past shows, not sold"], ["undated", "No show date"], ["all", "Everything"]].forEach(([v, t]) =>
+    [["all", "All inventory"], ["upcoming", "On hand"], ["sold", "Sold"], ["past", "Past shows, not sold"], ["undated", "No show date"]].forEach(([v, t]) =>
       chips.append(h("button", { type: "button", "data-v": v, text: t, onclick: () => { show = v; paint(); } })));
     paint();
     if (!items.length) return h("div", { class: "empty" }, h("h2", { text: "No inventory yet" }), h("p", { text: "Connect your Google Sheet above, or upload a CSV file." }));
