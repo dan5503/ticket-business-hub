@@ -25,7 +25,7 @@ export function variants(name) {
   [n, head].forEach((v) => { const m = v.split(/ (?:and|&|\+|with|ft\.?|feat\.?|x) |, /); if (m.length > 1) add(m[0], 4); });
   return out;
 }
-const UI = { mine: "holding", climb: "day", q: "", chart: "tiktok_us", chartN: 50 };
+const UI = { mine: "holding", climb: "day", q: "", chart: "all", chartView: "artists", chartN: 50 };
 
 // the charts we copy in; order = order of the buttons
 export const CHARTS = [
@@ -49,6 +49,13 @@ export function creditedArtists(artist, title) {
   const f = (title || "").match(/\((?:feat\.?|ft\.?|with)\s+([^)]+)\)/i);
   if (f) f[1].split(/\s*,\s*|\s+&\s+/).forEach(add);
   return out;
+}
+// the individual acts behind an entry (no combined "A, B & C" string)
+export function soloArtists(artist, title) {
+  const c = creditedArtists(artist, title);
+  if (c.length < 2) return c;
+  const parts = c.slice(1);
+  return parts.some((p) => key(p) === key(artist)) ? parts : creditedArtists(artist, "").length > 1 ? parts : [artist, ...parts];
 }
 async function loadCharts() {
   const out = [];
@@ -244,21 +251,66 @@ export async function renderSpotify(root) {
     : h("p", { class: "muted", text: "Nothing yet. Charts load every morning." });
 
   const chartBody = h("div");
+  // rank artists inside one chart (or across all of them) by how many songs they have and how high
+  function artistBoard(c) {
+    const lists = c === "all" ? [...byChart.entries()] : [[c, byChart.get(c) || []]];
+    const acc = new Map();
+    for (const [ch, list] of lists) {
+      const size = Math.max(list.length, 1), per = new Map();
+      for (const r of list) {
+        for (const a of soloArtists(r.artist, r.title)) {
+          const k = key(a), g = per.get(k) || { name: a, pts: 0, songs: [], metric: 0 };
+          g.pts += 1 - (r.rank - 1) / size; g.songs.push(r); g.metric += Number(r.metric || 0); per.set(k, g);
+        }
+      }
+      for (const [k, g] of per) {
+        const t = acc.get(k) || { k, name: g.name, pts: 0, songs: [], metric: 0, charts: new Set() };
+        t.pts += c === "all" ? Math.min(g.pts, 2) : g.pts; t.songs.push(...g.songs); t.metric += g.metric; t.charts.add(ch); acc.set(k, t);
+      }
+    }
+    return [...acc.values()].map((t) => ({ ...t, ...(yoursByKey.get(t.k) || {}), spots: people.get(t.k)?.spots || new Map(), best: t.songs.reduce((b, r) => (!b || r.rank < b.rank ? r : b), null) }))
+      .sort((a, b) => b.pts - a.pts);
+  }
+
   function paintChart() {
-    const meta = CHARTS.find(([c]) => c === UI.chart) || CHARTS[0], [c, label, about, link, metricLbl] = meta;
-    const list = byChart.get(c) || [], isArtist = c === "billboard_artist100";
-    const seg = h("div", { class: "seg wrap", role: "group", "aria-label": "Chart" }, CHARTS.map(([k, t]) =>
+    const artistsMode = UI.chartView === "artists";
+    if (!artistsMode && UI.chart === "all") UI.chart = "tiktok_us";
+    const all = ["all", "All charts", "Every chart below combined. Artists score for each song and how high it sits, so acts that are everywhere rise to the top.", null, null];
+    const choices = artistsMode ? [all, ...CHARTS] : CHARTS;
+    const [c, , about, link, metricLbl] = choices.find(([k]) => k === UI.chart) || choices[0];
+    const view = h("div", { class: "seg", role: "group", "aria-label": "Show" }, [["artists", "Artists"], ["songs", "Songs"]].map(([k, t]) =>
+      h("button", { type: "button", class: UI.chartView === k ? "on" : "", "aria-pressed": String(UI.chartView === k), onclick: () => { UI.chartView = k; UI.chartN = 50; paintChart(); } }, t)));
+    const seg = h("div", { class: "seg wrap", role: "group", "aria-label": "Chart" }, choices.map(([k, t]) =>
       h("button", { type: "button", class: UI.chart === k ? "on" : "", "aria-pressed": String(UI.chart === k), onclick: () => { UI.chart = k; UI.chartN = 50; paintChart(); } }, t)));
     const mv = (r) => { const m = r.move || ""; return (/^(new|re)$/i.test(m) ? h("span", { class: "pill good", text: /new/i.test(m) ? "New" : "Back" }) : h("span", { class: /^\+/.test(m) ? "up" : /^-/.test(m) ? "down" : "muted", text: m === "=" ? "–" : m })); };
     const you = (r) => { const hit = creditedArtists(r.artist, r.title).map((a) => yoursByKey.get(key(a))).filter(Boolean); if (!hit.length) return h("span", { class: "muted", text: "" }); const m = hit.reduce((o, x) => ({ h: o.h || x.h, hold: o.hold || x.hold, follow: o.follow || x.follow }), {}); return h("div", {}, youPills(m), followPill(m)); };
-    const cols = [["#", "r num", (r) => String(r.rank)], ["Move", "num", mv],
-      isArtist ? ["Artist", "", (r) => h("b", { text: r.title })] : ["Song", "", (r) => h("div", {}, h("b", { text: r.title }), h("span", { class: "sub", text: [r.artist, r.extra && c === "tiktok_us" ? r.extra : ""].filter(Boolean).join(" · ") }))],
-      ...(metricLbl ? [[metricLbl, "r num", (r) => big(r.metric)]] : []),
-      ["You", "", you]];
+    const isArtistChart = c === "billboard_artist100";
+    let list, cols;
+    if (artistsMode && !isArtistChart) {
+      list = artistBoard(c);
+      const n = (a) => list.indexOf(a) + 1;
+      const anyNew = (a) => a.songs.some((r) => /^(new|re)$/i.test(r.move || ""));
+      cols = c === "all"
+        ? [["#", "r num", (a) => String(n(a))], ["Artist", "", (a) => h("b", { text: a.name })], ["Charts", "r num", (a) => String(a.charts.size)], ["Songs", "r num", (a) => String(new Set(a.songs.map((r) => key(r.title))).size)],
+           ["Where they are", "", spots], ["You", "", (a) => h("div", {}, youPills(a), followPill(a))]]
+        : [["#", "r num", (a) => String(n(a))], ["Artist", "", (a) => h("b", { text: a.name })], ["Songs here", "r num", (a) => String(a.songs.length)],
+           ["Top song", "", (a) => h("div", {}, h("span", { text: `#${a.best.rank} ${a.best.title}` }), anyNew(a) ? h("span", { class: "pill good", text: "New entry" }) : "")],
+           ...(metricLbl ? [[metricLbl, "r num", (a) => big(a.metric)]] : []),
+           ["Also on", "", (a) => { const o = { ...a, spots: new Map([...a.spots].filter(([k]) => k !== c)) }; return o.spots.size ? spots(o) : h("span", { class: "muted", text: "Only here" }); }],
+           ["You", "", (a) => h("div", {}, youPills(a), followPill(a))]];
+    } else {
+      list = byChart.get(c) || [];
+      cols = [["#", "r num", (r) => String(r.rank)], ["Move", "num", mv],
+        isArtistChart ? ["Artist", "", (r) => h("b", { text: r.title })] : ["Song", "", (r) => h("div", {}, h("b", { text: r.title }), h("span", { class: "sub", text: [r.artist, r.extra && c === "tiktok_us" ? r.extra : ""].filter(Boolean).join(" · ") }))],
+        ...(isArtistChart ? [["Also on", "", (r) => { const p = people.get(key(r.title)); const o = p ? { spots: new Map([...p.spots].filter(([k]) => k !== c)) } : null; return o && o.spots.size ? spots(o) : h("span", { class: "muted", text: "" }); }]] : []),
+        ...(metricLbl ? [[metricLbl, "r num", (r) => big(r.metric)]] : []),
+        ["You", "", you]];
+    }
     const shown = list.slice(0, UI.chartN);
     const more = list.length > shown.length ? h("button", { type: "button", class: "mt", onclick: () => { UI.chartN += 50; paintChart(); } }, `Show more (${list.length - shown.length} left)`) : "";
-    chartBody.replaceChildren(h("div", { class: "row" }, seg),
-      h("p", { class: "muted small mt" }, about, list[0] ? ` As of ${fmtDate(list[0].day)}. ` : " ", h("a", { href: link, target: "_blank", rel: "noopener noreferrer", text: "Open the full chart ↗" })),
+    const day = c === "all" ? chartDay : (byChart.get(c) || [])[0]?.day;
+    chartBody.replaceChildren(h("div", { class: "row" }, view, seg),
+      h("p", { class: "muted small mt" }, about, day ? ` As of ${fmtDate(day)}. ` : " ", link ? h("a", { href: link, target: "_blank", rel: "noopener noreferrer", text: "Open the full chart ↗" }) : ""),
       list.length ? h("div", { class: "mt" }, table(cols, shown), more) : h("p", { class: "muted mt", text: "This chart didn't load today. It will try again tomorrow morning." }));
   }
 
@@ -278,7 +330,7 @@ export async function renderSpotify(root) {
     h("div", { class: "stack" },
       card("Your artists on the charts", onChartsBody, "Artists you hold tickets for, have sold, or follow, and their best spot on each chart today. Hover a spot for the song."),
       card("Hot across platforms", hotBody, "Artists on 3 or more charts at once. Showing up everywhere at the same time is a strong demand signal."),
-      card("Top charts", chartBody, "Instagram doesn't publish a public music chart. Its trending Reels audio is only shown inside the Instagram app."),
+      card("Top charts", chartBody, "Artists view groups each chart's songs by artist. Instagram doesn't publish a public music chart. Its trending Reels audio is only shown inside the Instagram app."),
       card("Spotify: your artists' listeners", mineBody, days < 8 ? `7-day change fills in after a week of daily snapshots (day ${days} of 8); 30-day after a month. Today's change is live now.` : "Monthly listeners is Spotify's 28-day count of unique listeners."),
       card("Spotify: climbing", climbBody, "Artists gaining listeners fast often sell better. ★ follows an artist so it stays in Your artists."),
       card("Find an artist on Spotify", h("div", {}, search, results))));
