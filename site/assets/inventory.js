@@ -43,7 +43,7 @@ export async function renderInventory(root) {
   const undated = unsold.filter((p) => !p.event_date);
   const past = unsold.filter((p) => p.event_date && p.event_date < today);
   const soldItems = items.filter((p) => p.sold_qty > 0);
-  const sum = (arr, k) => arr.reduce((a, r) => a + Number(r[k] || 0), 0);
+  const sum = (arr, k) => arr.reduce((a, r) => { const v = Number(r[k]); return a + (Number.isFinite(v) ? v : 0); }, 0);
 
   // ---------- Google Sheet panel ----------
   function sheetPanel() {
