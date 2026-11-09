@@ -266,16 +266,23 @@ export async function renderInventory(root) {
     let period = "all", limit = 500;
     const summary = h("div");
     function paintSummary(l) {
-      if (!TF.boughtFrom && !TF.boughtTo) return summary.replaceChildren();
       const dated = l.filter((p) => p.purchase_date);
+      if (!dated.length && !l.length) return summary.replaceChildren(h("p", { class: "muted mt", text: "No orders match." }));
       const from = TF.boughtFrom || dated.reduce((m, p) => (p.purchase_date < m ? p.purchase_date : m), today);
       const to = TF.boughtTo || today;
-      const span = Math.max(1, Math.round((Date.parse(to) - Date.parse(from)) / 86400000) + 1), weekly = span > 62, buckets = [];
-      for (let d = from; d <= to && buckets.length < 400; d = addDays(d, weekly ? 7 : 1)) {
+      const span = Math.max(1, Math.round((Date.parse(to) - Date.parse(from)) / 86400000) + 1), weekly = span > 62 && span <= 200, monthly = span > 200, buckets = [];
+      if (monthly) {
+        for (let m = from.slice(0, 7); m <= to.slice(0, 7); ) {
+          const r = dated.filter((p) => p.purchase_date.slice(0, 7) === m);
+          buckets.push({ d: m + "-01", m, cost: sum(r, "total_cost"), tix: sum(r, "quantity"), n: r.length });
+          const d = new Date(m + "-15T12:00:00Z"); d.setUTCMonth(d.getUTCMonth() + 1); m = d.toISOString().slice(0, 7);
+        }
+      } else for (let d = from; d <= to && buckets.length < 400; d = addDays(d, weekly ? 7 : 1)) {
         const end = weekly ? (addDays(d, 6) < to ? addDays(d, 6) : to) : d;
         const r = dated.filter((p) => p.purchase_date >= d && p.purchase_date <= end);
         buckets.push({ d, cost: sum(r, "total_cost"), tix: sum(r, "quantity"), n: r.length });
       }
+      const monthName = (m, long) => new Date(m + "-15T12:00:00Z").toLocaleDateString("en-US", { month: long ? "long" : "short", year: long ? "numeric" : "2-digit", timeZone: "UTC" });
       const stat = (label, value, foot) => h("div", { class: "kpi" }, h("div", { class: "lbl", text: label }), h("div", { class: "v", text: value }), foot ? h("div", { class: "f", text: foot }) : "");
       const top = [...l.reduce((m, p) => m.set(p.artist || "Unknown", (m.get(p.artist || "Unknown") || 0) + Number(p.total_cost || 0)), new Map())].sort((a, b) => b[1] - a[1]).slice(0, 3);
       const fmtD = (d) => dayLabel.format(new Date(d + "T12:00:00Z"));
@@ -286,9 +293,9 @@ export async function renderInventory(root) {
           stat("Money spent", fmtMoney(sum(l, "total_cost")), l.length ? `${fmtMoney(sum(l, "total_cost") / Math.max(1, sum(l, "quantity")))} a ticket on average` : ""),
           stat("Most bought", top[0] ? top[0][0] : "—", top.map(([a, c]) => `${a.length > 22 ? a.slice(0, 21) + "…" : a} ${fmtMoney(c)}`).join(" · "))),
         span > 1 && l.length ? h("div", { class: "mt" }, barChart({
-          label: "Money spent per day", height: 170,
-          labels: buckets.map((b) => fmtD(b.d).replace(/^\w+, /, "")),
-          titles: buckets.map((b) => (weekly ? `Week of ${fmtD(b.d)}` : fmtD(b.d))),
+          label: monthly ? "Money spent per month" : weekly ? "Money spent per week" : "Money spent per day", height: 170,
+          labels: buckets.map((b) => (monthly ? monthName(b.m) : fmtD(b.d).replace(/^\w+, /, ""))),
+          titles: buckets.map((b) => (monthly ? monthName(b.m, true) : weekly ? `Week of ${fmtD(b.d)}` : fmtD(b.d))),
           series: [{ name: "Spent", values: buckets.map((b) => b.cost), color: "var(--accent)" }],
           tip: (i) => [["Spent", fmtMoney(buckets[i].cost)], ["Tickets", fmtInt(buckets[i].tix)], ["Orders", fmtInt(buckets[i].n)]],
         })) : "");
