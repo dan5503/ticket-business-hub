@@ -45,6 +45,7 @@ export async function renderSpotify(root) {
     sb.from("spotify_history").select("day").order("day", { ascending: true }).limit(1).then((r) => r.data?.[0]?.day || null),
   ]);
   const days = first ? Math.round((Date.parse(today) - Date.parse(first)) / 86400000) + 1 : 0;
+  const unlock = first ? new Date(Date.parse(first) + 7 * 86400000 + 43200000).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" }) : "";
 
   // your history and holdings, keyed by lowercase artist name
   const upcoming = inv.filter((p) => p.remaining_qty > 0 && p.event_date && p.event_date >= today);
@@ -140,7 +141,7 @@ export async function renderSpotify(root) {
     if (min) q = q.gte("listeners", min);
     const { data, error } = await q;
     const seg = h("div", { class: "seg", role: "group", "aria-label": "Climbing" }, Object.entries(modes).map(([k, [, , t]]) =>
-      h("button", { type: "button", class: UI.climb === k ? "on" : "", disabled: k.startsWith("week") && days < 8, title: k.startsWith("week") && days < 8 ? `Available once a week of history is in (day ${days} of 8)` : "", onclick: () => { UI.climb = k; paintClimb(); } }, t)));
+      h("button", { type: "button", class: UI.climb === k ? "on" : "", disabled: k.startsWith("week") && days < 8, onclick: () => { UI.climb = k; paintClimb(); } }, t, k.startsWith("week") && days < 8 && unlock ? ` · from ${unlock}` : "")));
     const list = (data || []).map((a) => ({ ...a, h: hist.get(lc(a.name)), hold: hold.get(lc(a.name)) }));
     climbBody.replaceChildren(h("div", { class: "row" }, seg),
       error ? h("p", { class: "msg error", text: niceError(error) }) :

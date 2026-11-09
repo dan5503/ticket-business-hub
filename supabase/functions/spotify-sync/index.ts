@@ -24,7 +24,8 @@ export function parsePage(html: string) {
   for (const [, tr] of html.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)) {
     const a = tr.match(/href="(?:\.\.\/)?(?:spotify\/)?artist\/([A-Za-z0-9]{22})_songs\.html"[^>]*>([\s\S]*?)<\/a>/i);
     if (!a) continue;
-    const cells = [...tr.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)].map((m) => decode(m[1])).filter((c) => /^[-+]?[\d,]+$/.test(c));
+    // skip the artist's own cell, so names that are numbers (311, 112, 5050) aren't read as figures
+    const cells = [...tr.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)].filter((m) => !/_songs\.html/i.test(m[1])).map((m) => decode(m[1])).filter((c) => /^[-+]?[\d,]+$/.test(c));
     if (cells.length < 3) continue;
     const [rank, listeners, daily, peak] = cells.length >= 4 ? cells : [cells[0], cells[1], "0", cells[2]];
     out.push({ id: a[1], name: decode(a[2]), rank: num(rank), listeners: num(listeners), daily: num(daily), peak: num(peak) });
