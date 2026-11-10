@@ -187,9 +187,9 @@ function paint() {
   }
   const [tab, name] = routeArgs;
   const isEntity = tab === "artist" || tab === "venue" || tab === "account";
-  // Overview opens on this month; other tabs on all time, until you pick a period yourself.
+  // Overview and Sales open on this month; other tabs on all time, until you pick a period yourself.
   if (!UI.filtersTouched && !isEntity) {
-    const want = (tab || CFG.tabs[0][0]) === "overview" ? "month" : "all";
+    const want = ["overview", "sales"].includes(tab || CFG.tabs[0][0]) ? "month" : "all";
     if (F.preset !== want) { F.preset = want; [F.from, F.to] = presetRange(want); }
   }
   const rows = filtered();
