@@ -458,3 +458,9 @@ select.auto-w { width: auto; min-width: 200px; }
 .cat-row { display: flex; align-items: center; gap: 8px; margin: 16px 0 8px; }
 .cat-row .cat-title { margin: 0; }
 .mover.arr .mv { min-height: 22px; padding: 0 6px; font-size: 12px; }
+.goal-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
+.goal-stat { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 2px; }
+.goal-stat .lbl { font-family: var(--mono); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.goal-stat b { font-family: var(--mono); font-size: 22px; font-weight: 600; }
+.goal-stat .sub { color: var(--muted); font-size: 12px; }
+@media (max-width: 560px) { .goal-stats { grid-template-columns: 1fr 1fr; } .goal-stat:first-child { grid-column: 1 / -1; } }

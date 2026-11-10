@@ -718,7 +718,7 @@ function monthView() {
   // profit goals for the month (your book only)
   let goals = "";
   if (CFG.showTag && !isAll) {
-    const dim = daysInMonth(key), dayNow = isCurrent ? Number(nyDay.format(new Date()).slice(8)) : dim, daysLeft = dim - dayNow;
+    const dim = daysInMonth(key), dayNow = isCurrent ? Number(nyDay.format(new Date()).slice(8)) : dim, daysLeft = dim - dayNow + 1; // today counts, it isn't over
     const custom = UI.goal > 0;
     const steps = custom ? [UI.goal] : [10000, 25000, 50000, 75000, 100000];
     const next = steps.find((g) => g > t.profit), pace = dayNow ? (t.profit / dayNow) * dim : 0;
@@ -735,10 +735,16 @@ function monthView() {
     if (resetBtn) resetBtn.onclick = () => saveGoal(0);
     const lines = hide ? [h("li", { text: "Tap Show numbers to see your progress." })] : [
       steps.filter((g) => t.profit >= g).length ? h("li", {}, "Reached: ", h("b", { text: steps.filter((g) => t.profit >= g).map((g) => money(g)).join(", ") }), ".") : "",
-      next ? h("li", {}, h("b", { text: money(next - t.profit) }), ` more TAG to reach ${money(next)}` + (isCurrent && daysLeft > 0 ? `, about ${money((next - t.profit) / daysLeft)} a day for the ${plural(daysLeft, "day")} left.` : ".")) : h("li", { text: "Every goal reached this month." }),
+      next ? h("li", {}, h("b", { text: money(next - t.profit) }), ` more TAG to reach ${money(next)}` + (isCurrent && daysLeft > 0 ? `, about ${money((next - t.profit) / daysLeft)} a day for the ${plural(daysLeft, "day")} left, today included.` : ".")) : h("li", { text: "Every goal reached this month." }),
       isCurrent ? h("li", {}, "On pace for ", h("b", { class: cls(pace), text: sm(pace) }), (() => { const hit = steps.filter((g) => pace >= g).pop(); return hit ? `, which clears ${money(hit)}.` : "."; })()) : "",
     ];
-    goals = card("Profit goals", h("div", {}, bar, h("ul", { class: "summary mt" }, lines)), h("div", { class: "row" }, h("label", { for: "goal-in", class: "inline-lbl", text: "My goal $" }), goalIn, setBtn, resetBtn), custom ? `Your monthly TAG goal: ${money(UI.goal)}. It replaces the default milestones.` : "Default milestones at $10k, $25k, $50k, $75k and $100k of monthly TAG. Set your own goal to replace them.");
+    const perDay = next && isCurrent && daysLeft > 0 ? (next - t.profit) / daysLeft : null, soFar = dayNow ? t.profit / dayNow : 0;
+    const stat = (label, value, sub, c = "") => h("div", { class: "goal-stat" }, h("span", { class: "lbl", text: label }), h("b", { class: c, text: value }), h("span", { class: "sub", text: sub }));
+    const stats = hide || !isCurrent ? "" : h("div", { class: "goal-stats" },
+      perDay != null ? stat("Needed per day", money(perDay), `to reach ${money(next)}`, perDay > soFar ? "down" : "up") : stat("Needed per day", "$0.00", "Every goal reached", "up"),
+      stat("Your average so far", sm(soFar), `per day over ${plural(dayNow, "day")}`, cls(soFar)),
+      stat("Days left", String(daysLeft), "today included"));
+    goals = card("Profit goals", h("div", {}, stats, bar, h("ul", { class: "summary mt" }, lines)), h("div", { class: "row" }, h("label", { for: "goal-in", class: "inline-lbl", text: "My goal $" }), goalIn, setBtn, resetBtn), custom ? `Your monthly TAG goal: ${money(UI.goal)}. It replaces the default milestones.` : "Default milestones at $10k, $25k, $50k, $75k and $100k of monthly TAG. Set your own goal to replace them.");
   }
 
   // plain-English summary (one month only)
