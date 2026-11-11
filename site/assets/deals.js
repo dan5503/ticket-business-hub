@@ -26,54 +26,90 @@ export const renderDeals = (root) => renderInbox(root, "deals");
 export const renderSignups = (root) => renderInbox(root, "signups");
 
 async function renderInbox(root, mode) {
-  const [emails, sources, sales, inv] = await Promise.all([
+  const [emails, sources, sales, inv, plt] = await Promise.all([
     fetchAll("deal_emails", "id,gmail_id,received_at,sender_name,sender_email,subject,kind,artists,codes,starts_at,ends_at,link,summary,pinned,done,discount,event_name,venue,city,event_dates,buy_link,buy_site,buy_note", "received_at").catch(() => []),
     fetchAll("deal_sources", "id,name,url,category,status,email_used,note,signed_up_at", "name").catch(() => []),
-    fetchAll("sales", "artist,venue,city,quantity,total_sale,total_cost,profit,sold_date,event_date", "artist").catch(() => []),
-    fetchAll("inventory_outlook", "artist,discord_artist,event_date,remaining_qty", "event_date").catch(() => []),
+    fetchAll("sales", "artist,venue,city,event_date,section,row_name,quantity,total_sale,total_cost,profit,cost_per,sold_per,sold_date", "artist").catch(() => []),
+    fetchAll("inventory_outlook", "artist,discord_artist,venue,event_date,section,row_name,remaining_qty,cost_per", "event_date").catch(() => []),
+    fetchAll("plt_sales_clean", "artist,venue,city,event_date,section,row_name,quantity,total_sale,total_cost,profit,cost_per,sold_per,sold_date,is_repost", "artist").then((r) => r.filter((x) => !x.is_repost)).catch(() => []),
   ]);
   const today = todayISO(), sold = new Map(), held = new Map();
   sales.forEach((r) => { const k = lc(r.artist); if (k) sold.set(k, (sold.get(k) || 0) + 1); });
   inv.forEach((p) => { if (p.remaining_qty > 0 && p.event_date >= today) [p.discord_artist, p.artist].forEach((n) => { const k = lc(n); if (k) held.set(k, (held.get(k) || 0) + p.remaining_qty); }); });
   const matchName = (map, a) => { const k = lc(a); for (const [n, v] of map) if (n === k || n.startsWith(k + ":") || n.startsWith(k + " -")) return v; return 0; };
 
-  // ---------- your past results for an artist: how many sales, profit, ROI, wins ----------
+  // ---------- past results for an artist, kept in two separate books ----------
+  // "Your sales" = your own Discord sales (#danielbehnam-sales, table sales) and your inventory.
+  // "PLT sales"  = company-wide sales from #plt-sales (plt_sales_clean). Never mixed together.
   const sameName = (n, k) => n === k || n.startsWith(k + ":") || n.startsWith(k + " -");
-  const pastSales = (names) => { const ks = (names || []).map(lc).filter(Boolean); return ks.length ? sales.filter((r) => { const n = lc(r.artist); return n && ks.some((k) => sameName(n, k)); }) : []; };
+  const rowsFor = (book, names) => { const ks = (names || []).map(lc).filter(Boolean); return ks.length ? book.filter((r) => { const n = lc(r.artist); return n && ks.some((k) => sameName(n, k)); }) : []; };
+  const pastSales = (names) => rowsFor(sales, names);
   const num = (v) => (v == null || isNaN(+v) ? 0 : +v);
   function stats(rows) {
     if (!rows.length) return null;
-    const cost = rows.reduce((t, r) => t + num(r.total_cost), 0), profit = rows.reduce((t, r) => t + num(r.profit), 0);
+    const cost = rows.reduce((t, r) => t + num(r.total_cost), 0), sale = rows.reduce((t, r) => t + num(r.total_sale), 0), profit = rows.reduce((t, r) => t + num(r.profit), 0);
     const tix = rows.reduce((t, r) => t + (num(r.quantity) || 1), 0), wins = rows.filter((r) => num(r.profit) > 0).length;
     const last = rows.map((r) => r.sold_date).filter(Boolean).sort().pop();
-    return { n: rows.length, tix, cost, profit, roi: cost > 0 ? profit / cost : null, wins, perTix: tix ? profit / tix : 0, last };
+    return { n: rows.length, tix, cost, sale, profit, roi: cost > 0 ? profit / cost : null, wins, perTix: tix ? profit / tix : 0, buyEach: tix ? cost / tix : 0, sellEach: tix ? sale / tix : 0, last };
   }
   const pct = (x) => (x == null ? "—" : `${x >= 0 ? "+" : ""}${Math.round(x * 100)}%`);
   const signed = (v) => `${v < 0 ? "−" : "+"}${fmtMoney(Math.abs(v))}`;
   const verdict = (st) => (st.roi == null ? { t: "No cost on file", c: "" } : st.roi >= 0.2 ? { t: "Good returns", c: "good" } : st.roi >= 0 ? { t: "Thin returns", c: "warn" } : { t: "Lost money", c: "bad" });
-  const statLine = (st) => `${fmtInt(st.n)} sale${st.n === 1 ? "" : "s"} · ${fmtInt(st.tix)} tix · ${signed(st.profit)} profit (${pct(st.roi)} ROI) · ${st.wins} of ${st.n} made money · ${signed(st.perTix)}/ticket${st.last ? ` · last sold ${fmtDate(st.last)}` : ""}`;
-  function history(e) {
-    const rows = pastSales(e.artists && e.artists.length ? e.artists : [e.event_name]);
+  const statLine = (st) => `${fmtInt(st.n)} sale${st.n === 1 ? "" : "s"} · ${fmtInt(st.tix)} tix · ${signed(st.profit)} profit (${pct(st.roi)} ROI) · ${st.wins} of ${st.n} made money${st.last ? ` · last sold ${fmtDate(st.last)}` : ""}`;
+  const priceLine = (st) => `Bought avg ${fmtMoney(st.buyEach)}/ticket → sold avg ${fmtMoney(st.sellEach)}/ticket (${signed(st.perTix)} each)`;
+  const seat = (r) => [r.section ? `Sec ${r.section}` : "", r.row_name ? `Row ${r.row_name}` : ""].filter(Boolean).join(" · ") || "—";
+  function salesTable(rows) {
+    const list = [...rows].sort((a, b) => String(b.sold_date || "").localeCompare(String(a.sold_date || ""))).slice(0, 12);
+    return h("div", { class: "table-wrap" }, h("table", { class: "hist-table small" },
+      h("thead", {}, h("tr", {}, ["Sold", "Show", "Venue", "Seats", "Qty", "Bought ea", "Sold ea", "Profit"].map((t) => h("th", { text: t })))),
+      h("tbody", {}, list.map((r) => h("tr", {},
+        h("td", { text: r.sold_date ? fmtDate(r.sold_date) : "—" }),
+        h("td", { text: r.event_date ? fmtDate(r.event_date) : "—" }),
+        h("td", { text: r.venue || "—" }),
+        h("td", { text: seat(r) }),
+        h("td", { class: "num", text: fmtInt(num(r.quantity) || 1) }),
+        h("td", { class: "num", text: r.cost_per != null ? fmtMoney(+r.cost_per) : num(r.quantity) ? fmtMoney(num(r.total_cost) / num(r.quantity)) : "—" }),
+        h("td", { class: "num", text: r.sold_per != null ? fmtMoney(+r.sold_per) : num(r.quantity) ? fmtMoney(num(r.total_sale) / num(r.quantity)) : "—" }),
+        h("td", { class: `num ${num(r.profit) < 0 ? "down" : "up"}`, text: signed(num(r.profit)) }))))),
+      rows.length > list.length ? h("div", { class: "muted small", text: `Newest ${list.length} of ${rows.length} shown.` }) : "");
+  }
+  function bookBlock(label, source, rows, e) {
     const st = stats(rows);
-    const heldQ = Math.max(0, ...(e.artists || []).map((a) => matchName(held, a)));
-    if (!st && !heldQ) return "";
-    const v = st ? verdict(st) : null;
+    if (!st) return h("div", { class: "book" }, h("div", { class: "history-head" }, h("b", { class: "small", text: label }), h("span", { class: "muted small", text: source })), h("div", { class: "muted small", text: "Never sold." }));
+    const v = verdict(st);
     const city = lc((e.city || "").split(",")[0]), venue = lc(e.venue);
-    const local = st ? stats(rows.filter((r) => (venue && lc(r.venue) === venue) || (city && lc(r.city).startsWith(city)))) : null;
-    const venues = st ? [...new Set(rows.map((r) => r.venue).filter(Boolean))].slice(0, 3).join(", ") : "";
+    const local = stats(rows.filter((r) => (venue && lc(r.venue) === venue) || (city && lc(r.city || "").startsWith(city))));
+    const venues = [...new Set(rows.map((r) => r.venue).filter(Boolean))].slice(0, 3).join(", ");
+    return h("div", { class: "book" },
+      h("div", { class: "history-head" }, h("b", { class: "small", text: label }), h("span", { class: "muted small", text: source }), h("span", { class: `pill ${v.c}`, text: v.t })),
+      h("div", { class: `small ${st.profit < 0 ? "down" : st.roi >= 0.2 ? "up" : ""}`, text: statLine(st) }),
+      h("div", { class: "small", text: priceLine(st) }),
+      local && local.n !== st.n ? h("div", { class: "small", text: `At this venue/city: ${statLine(local)}` }) : local ? h("div", { class: "muted small", text: "All of these were at this venue/city." }) : h("div", { class: "muted small", text: `Not sold here before${venues ? ` (sold at ${venues})` : ""}.` }),
+      h("details", {}, h("summary", { class: "small", text: `See each sale (${st.n})` }), salesTable(rows)));
+  }
+  function holdingBlock(names) {
+    const ks = (names || []).map(lc).filter(Boolean), today = todayISO();
+    const rows = inv.filter((p) => p.remaining_qty > 0 && (!p.event_date || p.event_date >= today) && ks.some((k) => [p.discord_artist, p.artist].some((n) => n && sameName(lc(n), k))));
+    if (!rows.length) return "";
+    const qty = rows.reduce((t, p) => t + num(p.remaining_qty), 0);
+    return h("div", { class: "book" },
+      h("div", { class: "history-head" }, h("b", { class: "small", text: "You hold now" }), h("span", { class: "muted small", text: "your inventory" }), h("span", { class: "pill warn", text: `${fmtInt(qty)} tix` })),
+      rows.slice(0, 6).map((p) => h("div", { class: "small", text: `${p.event_date ? fmtDate(p.event_date) : "Date?"} · ${p.venue || ""} · ${seat(p)} · ${fmtInt(p.remaining_qty)} left${p.cost_per != null ? ` · bought ${fmtMoney(+p.cost_per)} ea` : ""}` })));
+  }
+  function history(e) {
+    const names = e.artists && e.artists.length ? e.artists : [e.event_name];
+    const mine = rowsFor(sales, names), company = rowsFor(plt, names), hold = holdingBlock(names);
+    if (!mine.length && !company.length && !hold) return h("div", { class: "history muted small", text: "No history: neither you nor PLT has sold this artist." });
     return h("div", { class: "history" },
-      h("div", { class: "history-head" },
-        h("span", { class: "muted small", text: "Your history" }),
-        v ? h("span", { class: `pill ${v.c}`, text: v.t }) : "",
-        heldQ ? h("span", { class: "pill warn", text: `You hold ${fmtInt(heldQ)} now` }) : ""),
-      st ? h("div", { class: `small ${st.profit < 0 ? "down" : st.roi >= 0.2 ? "up" : ""}`, text: statLine(st) }) : "",
-      local && local.n !== st.n ? h("div", { class: "small", text: `At this venue/city: ${statLine(local)}` }) : local ? h("div", { class: "muted small", text: "All of these were at this venue/city." }) : st ? h("div", { class: "muted small", text: `Not sold here before${venues ? ` (sold at ${venues})` : ""}.` }) : "");
+      hold,
+      bookBlock("Your sales", "#danielbehnam-sales", mine, e),
+      bookBlock("PLT sales", "#plt-sales, company-wide", company, e));
   }
   const pillFor = (a) => {
-    const hq = matchName(held, a), st = stats(pastSales([a]));
-    const tip = [hq ? `You hold ${hq} tickets` : "", st ? statLine(st) : ""].filter(Boolean).join(" · ");
+    const hq = matchName(held, a), st = stats(pastSales([a])), ps = stats(rowsFor(plt, [a]));
+    const tip = [hq ? `You hold ${hq} tickets` : "", st ? `Your sales: ${statLine(st)}. ${priceLine(st)}` : "", ps ? `PLT sales: ${statLine(ps)}. ${priceLine(ps)}` : ""].filter(Boolean).join("\n");
     const c = hq ? "warn" : st ? (st.profit < 0 ? "bad" : "good") : "";
-    return h("span", { class: `pill ${c}`, title: tip }, a, hq ? ` · ${hq} held` : "", st ? ` · sold ${st.n}× ${pct(st.roi)}` : "");
+    return h("span", { class: `pill ${c}`, title: tip }, a, hq ? ` · ${hq} held` : "", st ? ` · you ${pct(st.roi)}` : "", ps ? ` · PLT ${pct(ps.roi)}` : "");
   };
 
   async function setFlag(e, field, value) {
@@ -232,7 +268,7 @@ async function renderInbox(root, mode) {
         h("h1", { text: "Deals" }),
         h("p", { class: "sub", text: `Discounts, promo codes, BOGO and free-ticket offers from ${MAILBOX}, with the Ticketmaster, AXS or SeatGeek page to use them on. ${fmtInt(activeN)} active.` }))),
       h("div", { class: "stack" },
-        card("Ticket deals", dealBox, "Scanned three times a day. Sorted by which ends first. Each deal shows your past results for that artist (sales, profit, ROI, how many made money) and whether you sold at that venue or city. Tap a code to copy it.")));
+        card("Ticket deals", dealBox, "Scanned three times a day. Sorted by which ends first. Each deal shows past results for that artist in two separate books, Your sales (#danielbehnam-sales) and PLT sales (#plt-sales): profit, ROI, average bought and sold price per ticket, and every sale with its section and row. Tap a code to copy it.")));
     paintDeals();
     arrange(root, "deals2");
     return;
