@@ -53,7 +53,9 @@ export async function renderDeals(root) {
         h("div", { class: "muted small", text: [e.sender_name || e.sender_email, e.summary].filter(Boolean).join(" · ") }),
         flags.length || (e.codes || []).length ? h("div", { class: "deal-tags" }, flags, (e.codes || []).map(copy)) : ""),
       h("div", { class: "deal-actions" },
-        e.link ? h("a", { class: "btn small", href: e.link, target: "_blank", rel: "noopener noreferrer", text: "Open" }) : "",
+        /^https?:\/\//i.test(e.link || "")
+          ? h("a", { class: "btn small primary", href: e.link, target: "_blank", rel: "noopener noreferrer", title: "Open the show page from this email", text: "Show page ↗" })
+          : h("a", { class: "btn small", href: `https://www.google.com/search?q=${encodeURIComponent([(e.artists || [])[0] || e.subject, e.sender_name, "tickets"].filter(Boolean).join(" "))}`, target: "_blank", rel: "noopener noreferrer", title: "No show link in this email yet, so this searches for it", text: "Find show ↗" }),
         h("a", { class: "btn small ghost", href: `https://mail.google.com/mail/?authuser=${encodeURIComponent(MAILBOX)}#all/${encodeURIComponent(e.gmail_id)}`, target: "_blank", rel: "noopener noreferrer", text: "Email" }),
         h("button", { type: "button", class: "star", "aria-pressed": String(e.pinned), "aria-label": e.pinned ? "Unpin" : "Pin", text: e.pinned ? "★" : "☆", onclick: () => setFlag(e, "pinned", !e.pinned) }),
         h("button", { type: "button", class: "small ghost", text: e.done ? "Undo" : "Done", onclick: () => setFlag(e, "done", !e.done) })));
