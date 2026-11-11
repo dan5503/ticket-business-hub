@@ -464,3 +464,15 @@ select.auto-w { width: auto; min-width: 200px; }
 .goal-stat b { font-family: var(--mono); font-size: 22px; font-weight: 600; }
 .goal-stat .sub { color: var(--muted); font-size: 12px; }
 @media (max-width: 560px) { .goal-stats { grid-template-columns: 1fr 1fr; } .goal-stat:first-child { grid-column: 1 / -1; } }
+
+/* deals */
+.offer-list { display: grid; gap: 10px; }
+.offer { display: grid; grid-template-columns: 150px minmax(0, 1fr) auto; gap: 14px; align-items: start; border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+.offer.pinned { border-color: rgba(245,183,49,.45); }
+.offer.is-done { opacity: .55; }
+.offer-hit { display: flex; flex-direction: column; gap: 4px; }
+.offer-hit b { font-family: var(--mono); font-size: 19px; line-height: 1.15; color: var(--up); }
+.offer-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.offer-title { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 15px; }
+.offer-title .pill { margin-left: 0; }
+@media (max-width: 760px) { .offer { grid-template-columns: 1fr; gap: 8px; } .offer-hit { flex-direction: row; align-items: baseline; gap: 10px; } }

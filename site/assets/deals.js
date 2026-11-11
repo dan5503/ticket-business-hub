@@ -1,10 +1,11 @@
-// Deals & Presales: presale codes, on-sales and ticket deals pulled out of danielbehman@primelioninc.com,
-// plus the newsletter signup tracker.
+// Two pages built from the same sorted inbox (danielbehman@primelioninc.com):
+//   Presales: presale codes and on-sales, plus the newsletter signup tracker.
+//   Deals: discounts, promo codes, BOGO, free tickets, with the Ticketmaster/AXS/SeatGeek page to use them on.
 import { sb, h, fetchAll, fmtInt, fmtDate, toast, niceError, todayISO } from "./common.js";
 import { arrange } from "./layout.js";
 
 const MAILBOX = "danielbehman@primelioninc.com";
-const UI = { tab: "presale", show: 60 };
+const UI = { tab: "presale", show: 60, dtab: "active", dshow: 40 };
 const KINDS = { presale: "Presale", onsale: "On sale", deal: "Deal", news: "Newsletter" };
 const lc = (v) => (v || "").trim().toLowerCase();
 const when = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
@@ -17,10 +18,12 @@ function until(iso) {
   return { text: `in ${Math.round(m / 1440)} days`, c: "" };
 }
 
-export async function renderDeals(root) {
-  const reload = () => renderDeals(root);
+export const renderPresales = (root) => renderInbox(root, "presales");
+export const renderDeals = (root) => renderInbox(root, "deals");
+
+async function renderInbox(root, mode) {
   const [emails, sources, sales, inv] = await Promise.all([
-    fetchAll("deal_emails", "id,gmail_id,received_at,sender_name,sender_email,subject,kind,artists,codes,starts_at,ends_at,link,summary,pinned,done", "received_at").catch(() => []),
+    fetchAll("deal_emails", "id,gmail_id,received_at,sender_name,sender_email,subject,kind,artists,codes,starts_at,ends_at,link,summary,pinned,done,discount,event_name,venue,city,event_dates,buy_link,buy_site,buy_note", "received_at").catch(() => []),
     fetchAll("deal_sources", "id,name,url,category,status,email_used,note,signed_up_at", "name").catch(() => []),
     fetchAll("sales", "artist", "artist").catch(() => []),
     fetchAll("inventory_outlook", "artist,discord_artist,event_date,remaining_qty", "event_date").catch(() => []),
@@ -33,7 +36,7 @@ export async function renderDeals(root) {
   async function setFlag(e, field, value) {
     const { error } = await sb.from("deal_emails").update({ [field]: value }).eq("id", e.id);
     if (error) return toast(niceError(error), "error");
-    e[field] = value; paint();
+    e[field] = value; mode === "deals" ? paintDeals() : paint();
   }
   const copy = (code) => h("button", { type: "button", class: "code", title: "Copy code", onclick: async () => { try { await navigator.clipboard.writeText(code); toast(`Copied ${code}`, "ok"); } catch { toast("Couldn't copy. Select the code instead.", "error"); } } }, code);
 
@@ -67,10 +70,9 @@ export async function renderDeals(root) {
     const tabs = {
       presale: ["Presales", (e) => !e.done && e.kind === "presale" && (!e.starts_at || Date.parse(e.ends_at || e.starts_at) > now - 6 * 3600000)],
       onsale: ["On sales", (e) => !e.done && e.kind === "onsale" && (!e.starts_at || Date.parse(e.starts_at) > now - 6 * 3600000)],
-      deal: ["Deals", (e) => !e.done && e.kind === "deal" && (!e.ends_at || Date.parse(e.ends_at) > now)],
-      mine: ["Your artists", (e) => !e.done && (e.artists || []).some((a) => matchName(held, a) || matchName(sold, a))],
-      all: ["Everything", (e) => Date.parse(e.received_at) > recent || e.pinned],
-      done: ["Done", (e) => e.done],
+      mine: ["Your artists", (e) => !e.done && e.kind !== "deal" && (e.artists || []).some((a) => matchName(held, a) || matchName(sold, a))],
+      all: ["Everything", (e) => e.kind !== "deal" && (Date.parse(e.received_at) > recent || e.pinned)],
+      done: ["Done", (e) => e.done && e.kind !== "deal"],
     };
     const [, pick] = tabs[UI.tab];
     const list = emails.filter(pick).sort((a, b) =>
@@ -110,14 +112,76 @@ export async function renderDeals(root) {
       done.length ? h("details", { class: "mt" }, h("summary", { text: `Done (${done.length})` }), h("div", { class: "deal-list mt" }, done.map(row))) : "");
   }
 
+  // ---------- deals ----------
+  const SITES = { ticketmaster: "Ticketmaster", axs: "AXS", seatgeek: "SeatGeek", livenation: "Live Nation", etix: "Etix", eventbrite: "Eventbrite", dice: "DICE", paciolan: "Paciolan", venue: "venue site", other: "ticket site" };
+  const siteOf = (e) => {
+    if (e.buy_site && SITES[e.buy_site]) return SITES[e.buy_site];
+    try { const host = new URL(e.buy_link).hostname; const k = Object.keys(SITES).find((x) => host.includes(x)); return k ? SITES[k] : host.replace(/^www\./, ""); } catch { return "ticket site"; }
+  };
+  const ok = (u) => /^https?:\/\//i.test(u || "");
+  function dealCard(e) {
+    const left = e.ends_at ? Date.parse(e.ends_at) - Date.now() : null;
+    const ends = e.ends_at ? (left < 0 ? { t: "Ended", c: "muted" } : left < 48 * 3600000 ? { t: `Ends ${until(e.ends_at).text.replace("in ", "in ")}`, c: "down" } : { t: `Ends ${when.format(new Date(e.ends_at))}`, c: "" }) : { t: "No end date given", c: "muted" };
+    const flags = (e.artists || []).map((a) => { const hq = matchName(held, a), sq = matchName(sold, a); return hq || sq ? h("span", { class: `pill ${hq ? "warn" : "good"}`, text: hq ? `You hold ${hq}` : `Sold ${sq}×` }) : ""; });
+    const title = e.event_name || (e.artists || [])[0] || e.subject;
+    const where = [e.venue, e.city].filter(Boolean).join(", ");
+    return h("article", { class: `offer ${e.pinned ? "pinned" : ""} ${e.done ? "is-done" : ""}` },
+      h("div", { class: "offer-hit" }, h("b", { text: e.discount || "Offer" }), h("span", { class: `small ${ends.c}`, text: ends.t })),
+      h("div", { class: "offer-body" },
+        h("div", { class: "offer-title" }, h("b", { text: title }), flags),
+        h("div", { class: "muted small", text: [where, e.event_dates].filter(Boolean).join(" · ") || e.sender_name || "" }),
+        e.summary ? h("div", { class: "small", text: e.summary }) : "",
+        e.buy_note ? h("div", { class: "small meh", text: e.buy_note }) : "",
+        (e.codes || []).length ? h("div", { class: "deal-tags" }, h("span", { class: "muted small", text: "Code" }), (e.codes || []).map(copy)) : h("div", { class: "muted small", text: "No code needed" })),
+      h("div", { class: "deal-actions" },
+        ok(e.buy_link) ? h("a", { class: "btn small primary", href: e.buy_link, target: "_blank", rel: "noopener noreferrer", text: `Buy on ${siteOf(e)} ↗` })
+          : h("a", { class: "btn small", href: `https://www.ticketmaster.com/search?q=${encodeURIComponent([title, e.city].filter(Boolean).join(" "))}`, target: "_blank", rel: "noopener noreferrer", title: "No event page found yet, so this searches Ticketmaster", text: "Search Ticketmaster ↗" }),
+        ok(e.link) ? h("a", { class: "btn small ghost", href: e.link, target: "_blank", rel: "noopener noreferrer", title: "The offer link from the email", text: "Offer ↗" }) : "",
+        h("a", { class: "btn small ghost", href: `https://mail.google.com/mail/?authuser=${encodeURIComponent(MAILBOX)}#all/${encodeURIComponent(e.gmail_id)}`, target: "_blank", rel: "noopener noreferrer", text: "Email" }),
+        h("button", { type: "button", class: "star", "aria-pressed": String(e.pinned), "aria-label": e.pinned ? "Unpin" : "Pin", text: e.pinned ? "★" : "☆", onclick: () => setFlag(e, "pinned", !e.pinned) }),
+        h("button", { type: "button", class: "small ghost", text: e.done ? "Undo" : "Done", onclick: () => setFlag(e, "done", !e.done) })));
+  }
+  const dealBox = h("div");
+  function paintDeals() {
+    const now = Date.now(), live = (e) => !e.ends_at || Date.parse(e.ends_at) > now;
+    const deals = emails.filter((e) => e.kind === "deal");
+    const tabs = {
+      active: ["Active", (e) => !e.done && live(e)],
+      soon: ["Ending in 48h", (e) => !e.done && e.ends_at && Date.parse(e.ends_at) > now && Date.parse(e.ends_at) < now + 48 * 3600000],
+      mine: ["Your artists", (e) => !e.done && live(e) && (e.artists || []).some((a) => matchName(held, a) || matchName(sold, a))],
+      all: ["Last 30 days", (e) => Date.parse(e.received_at) > now - 30 * 86400000 || e.pinned],
+      done: ["Done", (e) => e.done],
+    };
+    const [, pick] = tabs[UI.dtab];
+    const list = deals.filter(pick).sort((a, b) => (b.pinned - a.pinned) || (Date.parse(a.ends_at || "2999-01-01") - Date.parse(b.ends_at || "2999-01-01")) || (Date.parse(b.received_at) - Date.parse(a.received_at)));
+    dealBox.replaceChildren(
+      h("div", { class: "seg", role: "group", "aria-label": "Show" }, Object.entries(tabs).map(([k, [t, f]]) =>
+        h("button", { type: "button", class: UI.dtab === k ? "on" : "", onclick: () => { UI.dtab = k; UI.dshow = 40; paintDeals(); } }, `${t} ${fmtInt(deals.filter(f).length)}`))),
+      list.length ? h("div", { class: "offer-list mt" }, list.slice(0, UI.dshow).map(dealCard)) :
+        h("p", { class: "muted mt", text: deals.length ? "Nothing here right now." : "No deals yet. The inbox is scanned for discounts and promo codes three times a day." }),
+      list.length > UI.dshow ? h("button", { type: "button", class: "mt", text: `Show more (${list.length - UI.dshow} left)`, onclick: () => { UI.dshow += 40; paintDeals(); } }) : "");
+  }
+
   const card = (title, body, note) => h("section", { class: "card" }, h("div", { class: "card-head" }, h("h2", { class: "card-title", text: title })), body, note ? h("p", { class: "note-line", text: note }) : "");
+  if (mode === "deals") {
+    const activeN = emails.filter((e) => e.kind === "deal" && !e.done && (!e.ends_at || Date.parse(e.ends_at) > Date.now())).length;
+    root.replaceChildren(
+      h("div", { class: "page-head" }, h("div", {},
+        h("h1", { text: "Deals" }),
+        h("p", { class: "sub", text: `Discounts, promo codes, BOGO and free-ticket offers from ${MAILBOX}, with the Ticketmaster, AXS or SeatGeek page to use them on. ${fmtInt(activeN)} active.` }))),
+      h("div", { class: "stack" },
+        card("Ticket deals", dealBox, "Scanned three times a day. Sorted by which ends first. Yellow means you hold tickets for that artist, green means you've sold them. Tap a code to copy it.")));
+    paintDeals();
+    arrange(root, "deals2");
+    return;
+  }
   const upcoming = emails.filter((e) => !e.done && e.kind === "presale" && e.starts_at && Date.parse(e.starts_at) > Date.now() && Date.parse(e.starts_at) < Date.now() + 48 * 3600000).length;
   root.replaceChildren(
     h("div", { class: "page-head" }, h("div", {},
-      h("h1", { text: "Deals & Presales" }),
-      h("p", { class: "sub", text: `Presale codes, on-sales and ticket deals pulled out of ${MAILBOX}.${upcoming ? ` ${upcoming === 1 ? "1 presale starts" : `${upcoming} presales start`} in the next 48 hours.` : ""}` }))),
+      h("h1", { text: "Presales" }),
+      h("p", { class: "sub", text: `Presale codes and on-sales pulled out of ${MAILBOX}.${upcoming ? ` ${upcoming === 1 ? "1 presale starts" : `${upcoming} presales start`} in the next 48 hours.` : ""}` }))),
     h("div", { class: "stack" },
-      card("Inbox, sorted", listBox, "Sorted every couple of hours. Artists you hold tickets for are marked in yellow, ones you've sold in green. Tap a code to copy it."),
+      card("Presales and on-sales", listBox, "Sorted every few hours. Artists you hold tickets for are marked in yellow, ones you've sold in green. Tap a code to copy it."),
       card("Sign up for more presales", trackerBox, "Only places that aren't emailing you yet are listed. Live Nation, Ticketmaster, AEG, Goldenvoice, Bowery, AXS, SeatGeek, Bandsintown, MSG, Barclays, MetLife and others already are.")));
   trackerBox.replaceChildren(tracker());
   paint();
