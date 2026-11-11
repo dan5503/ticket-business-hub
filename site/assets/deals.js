@@ -115,7 +115,7 @@ async function renderInbox(root, mode) {
   async function setFlag(e, field, value) {
     const { error } = await sb.from("deal_emails").update({ [field]: value }).eq("id", e.id);
     if (error) return toast(niceError(error), "error");
-    e[field] = value; mode === "deals" ? paintDeals() : mode === "signups" ? paintSignups() : paint();
+    e[field] = value; mode === "deals" ? (paintDeals(), paintCash()) : mode === "signups" ? paintSignups() : paint();
   }
   const copy = (code) => h("button", { type: "button", class: "code", title: "Copy code", onclick: async () => { try { await navigator.clipboard.writeText(code); toast(`Copied ${code}`, "ok"); } catch { toast("Couldn't copy. Select the code instead.", "error"); } } }, code);
 
@@ -218,9 +218,23 @@ async function renderInbox(root, mode) {
         h("button", { type: "button", class: "small ghost", text: e.done ? "Undo" : "Done", onclick: () => setFlag(e, "done", !e.done) })));
   }
   const dealBox = h("div");
+  // ---------- Concert Cash (credit codes that work like gift cards) ----------
+  const isCash = (e) => /concert\s*cash/i.test(`${e.discount || ""} ${e.event_name || ""}`);
+  const cashBox = h("div");
+  const cashValue = (e) => { const m = /\$\s*([\d,.]+)/.exec(e.discount || ""); const per = m ? +m[1].replace(/,/g, "") : 0; return per * Math.max(1, (e.codes || []).length); };
+  function paintCash() {
+    const now = Date.now(), all = emails.filter((e) => e.kind === "deal" && isCash(e));
+    const open = all.filter((e) => !e.done && (!e.ends_at || Date.parse(e.ends_at) > now));
+    const total = open.reduce((t, e) => t + cashValue(e), 0);
+    const shown = open.sort((a, b) => Date.parse(a.ends_at || "2999-01-01") - Date.parse(b.ends_at || "2999-01-01"));
+    cashBox.replaceChildren(
+      h("p", { class: "small" }, open.length ? `${fmtMoney(total)} unused across ${fmtInt(open.reduce((t, e) => t + Math.max(1, (e.codes || []).length), 0))} code(s).` : "No unused Concert Cash right now. New codes show up here automatically."),
+      shown.length ? h("div", { class: "offer-list mt" }, shown.map(dealCard)) : "",
+      all.length > open.length ? h("details", { class: "mt" }, h("summary", { class: "small", text: `Used or expired (${all.length - open.length})` }), h("div", { class: "offer-list mt" }, all.filter((e) => !open.includes(e)).map(dealCard))) : "");
+  }
   function paintDeals() {
     const now = Date.now(), live = (e) => !e.ends_at || Date.parse(e.ends_at) > now;
-    const deals = emails.filter((e) => e.kind === "deal");
+    const deals = emails.filter((e) => e.kind === "deal" && !isCash(e));
     const tabs = {
       active: ["Active", (e) => !e.done && live(e)],
       soon: ["Ending in 48h", (e) => !e.done && e.ends_at && Date.parse(e.ends_at) > now && Date.parse(e.ends_at) < now + 48 * 3600000],
@@ -262,14 +276,16 @@ async function renderInbox(root, mode) {
 
   const card = (title, body, note) => h("section", { class: "card" }, h("div", { class: "card-head" }, h("h2", { class: "card-title", text: title })), body, note ? h("p", { class: "note-line", text: note }) : "");
   if (mode === "deals") {
-    const activeN = emails.filter((e) => e.kind === "deal" && !e.done && (!e.ends_at || Date.parse(e.ends_at) > Date.now())).length;
+    const activeN = emails.filter((e) => e.kind === "deal" && !isCash(e) && !e.done && (!e.ends_at || Date.parse(e.ends_at) > Date.now())).length;
     root.replaceChildren(
       h("div", { class: "page-head" }, h("div", {},
         h("h1", { text: "Deals" }),
         h("p", { class: "sub", text: `Discounts, promo codes, BOGO and free-ticket offers from ${MAILBOX}, with the Ticketmaster, AXS or SeatGeek page to use them on. ${fmtInt(activeN)} active.` }))),
       h("div", { class: "stack" },
+        card("Concert Cash", cashBox, "Live Nation / Ticketmaster Concert Cash codes found in your emails. Each code works like a gift card: one code per order, at Ticketmaster checkout under \"+ Add Credits / Promo Codes / Gift Codes\", on Live Nation-promoted shows. Tap a code to copy it, and tap Done once it's used."),
         card("Ticket deals", dealBox, "Scanned three times a day. Sorted by which ends first. Each deal shows past results for that artist in two separate books, Your sales (#danielbehnam-sales) and PLT sales (#plt-sales): profit, ROI, average bought and sold price per ticket, and every sale with its section and row. Tap a code to copy it.")));
     paintDeals();
+    paintCash();
     arrange(root, "deals2");
     return;
   }
