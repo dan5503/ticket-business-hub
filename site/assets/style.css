@@ -422,6 +422,7 @@ button.code { min-height: 24px; padding: 1px 8px; font-family: var(--mono); font
 .pill.k-presale { color: var(--accent); border-color: var(--accent); }
 .pill.k-onsale { color: var(--up); border-color: rgba(47,211,138,.45); }
 .pill.k-deal { color: var(--meh); border-color: rgba(242,184,75,.5); }
+.pill.k-signup { color: #a479e2; border-color: rgba(164,121,226,.5); }
 @media (max-width: 760px) { .deal { grid-template-columns: minmax(0, 1fr); gap: 6px; } .deal-when { flex-direction: row; flex-wrap: wrap; align-items: center; } }
 .signup { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; flex-wrap: wrap; }
 .signup-main { display: flex; gap: 12px; align-items: center; min-width: 0; }

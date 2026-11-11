@@ -1,12 +1,15 @@
-// Two pages built from the same sorted inbox (danielbehman@primelioninc.com):
-//   Presales: presale codes and on-sales, plus the newsletter signup tracker.
+// Three pages built from the same sorted inbox (danielbehman@primelioninc.com):
+//   Presales: presale codes and on-sales you can buy at.
+//   Signups: presales you have to register for first (artist presale sign-ups, Verified Fan, Seated),
+//            plus the newsletter signup tracker.
 //   Deals: discounts, promo codes, BOGO, free tickets, with the Ticketmaster/AXS/SeatGeek page to use them on.
 import { sb, h, fetchAll, fmtInt, fmtDate, toast, niceError, todayISO } from "./common.js";
 import { arrange } from "./layout.js";
 
 const MAILBOX = "danielbehman@primelioninc.com";
-const UI = { tab: "presale", show: 60, dtab: "active", dshow: 40 };
-const KINDS = { presale: "Presale", onsale: "On sale", deal: "Deal", news: "Newsletter" };
+const UI = { tab: "presale", show: 60, dtab: "active", dshow: 40, stab: "open", sshow: 60 };
+const KINDS = { presale: "Presale", onsale: "On sale", deal: "Deal", signup: "Sign-up", news: "Newsletter" };
+const SIDE = new Set(["deal", "signup"]); // kinds that have their own page, kept off the Presales lists
 const lc = (v) => (v || "").trim().toLowerCase();
 const when = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 const ago = (iso) => { const m = Math.round((Date.now() - Date.parse(iso)) / 60000); return m < 60 ? `${m}m ago` : m < 1440 ? `${Math.round(m / 60)}h ago` : `${Math.round(m / 1440)}d ago`; };
@@ -20,6 +23,7 @@ function until(iso) {
 
 export const renderPresales = (root) => renderInbox(root, "presales");
 export const renderDeals = (root) => renderInbox(root, "deals");
+export const renderSignups = (root) => renderInbox(root, "signups");
 
 async function renderInbox(root, mode) {
   const [emails, sources, sales, inv] = await Promise.all([
@@ -36,7 +40,7 @@ async function renderInbox(root, mode) {
   async function setFlag(e, field, value) {
     const { error } = await sb.from("deal_emails").update({ [field]: value }).eq("id", e.id);
     if (error) return toast(niceError(error), "error");
-    e[field] = value; mode === "deals" ? paintDeals() : paint();
+    e[field] = value; mode === "deals" ? paintDeals() : mode === "signups" ? paintSignups() : paint();
   }
   const copy = (code) => h("button", { type: "button", class: "code", title: "Copy code", onclick: async () => { try { await navigator.clipboard.writeText(code); toast(`Copied ${code}`, "ok"); } catch { toast("Couldn't copy. Select the code instead.", "error"); } } }, code);
 
@@ -70,9 +74,9 @@ async function renderInbox(root, mode) {
     const tabs = {
       presale: ["Presales", (e) => !e.done && e.kind === "presale" && (!e.starts_at || Date.parse(e.ends_at || e.starts_at) > now - 6 * 3600000)],
       onsale: ["On sales", (e) => !e.done && e.kind === "onsale" && (!e.starts_at || Date.parse(e.starts_at) > now - 6 * 3600000)],
-      mine: ["Your artists", (e) => !e.done && e.kind !== "deal" && (e.artists || []).some((a) => matchName(held, a) || matchName(sold, a))],
-      all: ["Everything", (e) => e.kind !== "deal" && (Date.parse(e.received_at) > recent || e.pinned)],
-      done: ["Done", (e) => e.done && e.kind !== "deal"],
+      mine: ["Your artists", (e) => !e.done && !SIDE.has(e.kind) && (e.artists || []).some((a) => matchName(held, a) || matchName(sold, a))],
+      all: ["Everything", (e) => !SIDE.has(e.kind) && (Date.parse(e.received_at) > recent || e.pinned)],
+      done: ["Done", (e) => e.done && !SIDE.has(e.kind)],
     };
     const [, pick] = tabs[UI.tab];
     const list = emails.filter(pick).sort((a, b) =>
@@ -162,6 +166,28 @@ async function renderInbox(root, mode) {
       list.length > UI.dshow ? h("button", { type: "button", class: "mt", text: `Show more (${list.length - UI.dshow} left)`, onclick: () => { UI.dshow += 40; paintDeals(); } }) : "");
   }
 
+  // ---------- presale sign-ups ----------
+  const signBox = h("div");
+  function paintSignups() {
+    const now = Date.now(), open = (e) => !e.starts_at || Date.parse(e.ends_at || e.starts_at) > now - 6 * 3600000;
+    const signs = emails.filter((e) => e.kind === "signup");
+    const tabs = {
+      open: ["Open", (e) => !e.done && open(e)],
+      soon: ["Closing in 48h", (e) => !e.done && e.starts_at && Date.parse(e.starts_at) > now && Date.parse(e.starts_at) < now + 48 * 3600000],
+      mine: ["Your artists", (e) => !e.done && open(e) && (e.artists || []).some((a) => matchName(held, a) || matchName(sold, a))],
+      all: ["Last 30 days", (e) => Date.parse(e.received_at) > now - 30 * 86400000 || e.pinned],
+      done: ["Done", (e) => e.done],
+    };
+    const [, pick] = tabs[UI.stab];
+    const list = signs.filter(pick).sort((a, b) => (b.pinned - a.pinned) || (Date.parse(a.starts_at || "2999-01-01") - Date.parse(b.starts_at || "2999-01-01")) || (Date.parse(b.received_at) - Date.parse(a.received_at)));
+    signBox.replaceChildren(
+      h("div", { class: "seg", role: "group", "aria-label": "Show" }, Object.entries(tabs).map(([k, [t, f]]) =>
+        h("button", { type: "button", class: UI.stab === k ? "on" : "", onclick: () => { UI.stab = k; UI.sshow = 60; paintSignups(); } }, `${t} ${fmtInt(signs.filter(f).length)}`))),
+      list.length ? h("div", { class: "deal-list mt" }, list.slice(0, UI.sshow).map(item)) :
+        h("p", { class: "muted mt", text: signs.length ? "Nothing here right now." : "No presale sign-ups yet. Emails asking you to register for a presale land here." }),
+      list.length > UI.sshow ? h("button", { type: "button", class: "mt", text: `Show more (${list.length - UI.sshow} left)`, onclick: () => { UI.sshow += 60; paintSignups(); } }) : "");
+  }
+
   const card = (title, body, note) => h("section", { class: "card" }, h("div", { class: "card-head" }, h("h2", { class: "card-title", text: title })), body, note ? h("p", { class: "note-line", text: note }) : "");
   if (mode === "deals") {
     const activeN = emails.filter((e) => e.kind === "deal" && !e.done && (!e.ends_at || Date.parse(e.ends_at) > Date.now())).length;
@@ -175,15 +201,27 @@ async function renderInbox(root, mode) {
     arrange(root, "deals2");
     return;
   }
+  if (mode === "signups") {
+    const openN = emails.filter((e) => e.kind === "signup" && !e.done && (!e.starts_at || Date.parse(e.ends_at || e.starts_at) > Date.now() - 6 * 3600000)).length;
+    root.replaceChildren(
+      h("div", { class: "page-head" }, h("div", {},
+        h("h1", { text: "Signups" }),
+        h("p", { class: "sub", text: `Presales you have to register for first (artist presale sign-ups, Verified Fan, Seated), pulled out of ${MAILBOX}. ${fmtInt(openN)} open.` }))),
+      h("div", { class: "stack" },
+        card("Presale sign-ups", signBox, "Sorted by the date in the email (sign-up deadline or presale start). Once you've registered, tap Done. Yellow means you hold tickets for that artist, green means you've sold them."),
+        card("Sign up for more presales", trackerBox, "Only places that aren't emailing you yet are listed. Live Nation, Ticketmaster, AEG, Goldenvoice, Bowery, AXS, SeatGeek, Bandsintown, MSG, Barclays, MetLife and others already are.")));
+    trackerBox.replaceChildren(tracker());
+    paintSignups();
+    arrange(root, "signups");
+    return;
+  }
   const upcoming = emails.filter((e) => !e.done && e.kind === "presale" && e.starts_at && Date.parse(e.starts_at) > Date.now() && Date.parse(e.starts_at) < Date.now() + 48 * 3600000).length;
   root.replaceChildren(
     h("div", { class: "page-head" }, h("div", {},
       h("h1", { text: "Presales" }),
       h("p", { class: "sub", text: `Presale codes and on-sales pulled out of ${MAILBOX}.${upcoming ? ` ${upcoming === 1 ? "1 presale starts" : `${upcoming} presales start`} in the next 48 hours.` : ""}` }))),
     h("div", { class: "stack" },
-      card("Presales and on-sales", listBox, "Sorted every few hours. Artists you hold tickets for are marked in yellow, ones you've sold in green. Tap a code to copy it."),
-      card("Sign up for more presales", trackerBox, "Only places that aren't emailing you yet are listed. Live Nation, Ticketmaster, AEG, Goldenvoice, Bowery, AXS, SeatGeek, Bandsintown, MSG, Barclays, MetLife and others already are.")));
-  trackerBox.replaceChildren(tracker());
+      card("Presales and on-sales", listBox, "Sorted every few hours. Presales you have to register for first are on the Signups page. Artists you hold tickets for are marked in yellow, ones you've sold in green. Tap a code to copy it.")));
   paint();
   arrange(root, "deals");
 }
