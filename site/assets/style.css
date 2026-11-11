@@ -468,6 +468,8 @@ select.auto-w { width: auto; min-width: 200px; }
 
 /* deals */
 .offer-list { display: grid; gap: 10px; }
+.history { margin-top: 6px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; display: grid; gap: 3px; }
+.history-head { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .offer { display: grid; grid-template-columns: 150px minmax(0, 1fr) auto; gap: 14px; align-items: start; border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
 .offer.pinned { border-color: rgba(245,183,49,.45); }
 .offer.is-done { opacity: .55; }

@@ -3,7 +3,7 @@
 //   Signups: presales you have to register for first (artist presale sign-ups, Verified Fan, Seated),
 //            plus the newsletter signup tracker.
 //   Deals: discounts, promo codes, BOGO, free tickets, with the Ticketmaster/AXS/SeatGeek page to use them on.
-import { sb, h, fetchAll, fmtInt, fmtDate, toast, niceError, todayISO } from "./common.js";
+import { sb, h, fetchAll, fmtInt, fmtDate, fmtMoney, toast, niceError, todayISO } from "./common.js";
 import { arrange } from "./layout.js";
 
 const MAILBOX = "danielbehman@primelioninc.com";
@@ -29,13 +29,52 @@ async function renderInbox(root, mode) {
   const [emails, sources, sales, inv] = await Promise.all([
     fetchAll("deal_emails", "id,gmail_id,received_at,sender_name,sender_email,subject,kind,artists,codes,starts_at,ends_at,link,summary,pinned,done,discount,event_name,venue,city,event_dates,buy_link,buy_site,buy_note", "received_at").catch(() => []),
     fetchAll("deal_sources", "id,name,url,category,status,email_used,note,signed_up_at", "name").catch(() => []),
-    fetchAll("sales", "artist", "artist").catch(() => []),
+    fetchAll("sales", "artist,venue,city,quantity,total_sale,total_cost,profit,sold_date,event_date", "artist").catch(() => []),
     fetchAll("inventory_outlook", "artist,discord_artist,event_date,remaining_qty", "event_date").catch(() => []),
   ]);
   const today = todayISO(), sold = new Map(), held = new Map();
   sales.forEach((r) => { const k = lc(r.artist); if (k) sold.set(k, (sold.get(k) || 0) + 1); });
   inv.forEach((p) => { if (p.remaining_qty > 0 && p.event_date >= today) [p.discord_artist, p.artist].forEach((n) => { const k = lc(n); if (k) held.set(k, (held.get(k) || 0) + p.remaining_qty); }); });
   const matchName = (map, a) => { const k = lc(a); for (const [n, v] of map) if (n === k || n.startsWith(k + ":") || n.startsWith(k + " -")) return v; return 0; };
+
+  // ---------- your past results for an artist: how many sales, profit, ROI, wins ----------
+  const sameName = (n, k) => n === k || n.startsWith(k + ":") || n.startsWith(k + " -");
+  const pastSales = (names) => { const ks = (names || []).map(lc).filter(Boolean); return ks.length ? sales.filter((r) => { const n = lc(r.artist); return n && ks.some((k) => sameName(n, k)); }) : []; };
+  const num = (v) => (v == null || isNaN(+v) ? 0 : +v);
+  function stats(rows) {
+    if (!rows.length) return null;
+    const cost = rows.reduce((t, r) => t + num(r.total_cost), 0), profit = rows.reduce((t, r) => t + num(r.profit), 0);
+    const tix = rows.reduce((t, r) => t + (num(r.quantity) || 1), 0), wins = rows.filter((r) => num(r.profit) > 0).length;
+    const last = rows.map((r) => r.sold_date).filter(Boolean).sort().pop();
+    return { n: rows.length, tix, cost, profit, roi: cost > 0 ? profit / cost : null, wins, perTix: tix ? profit / tix : 0, last };
+  }
+  const pct = (x) => (x == null ? "—" : `${x >= 0 ? "+" : ""}${Math.round(x * 100)}%`);
+  const signed = (v) => `${v < 0 ? "−" : "+"}${fmtMoney(Math.abs(v))}`;
+  const verdict = (st) => (st.roi == null ? { t: "No cost on file", c: "" } : st.roi >= 0.2 ? { t: "Good returns", c: "good" } : st.roi >= 0 ? { t: "Thin returns", c: "warn" } : { t: "Lost money", c: "bad" });
+  const statLine = (st) => `${fmtInt(st.n)} sale${st.n === 1 ? "" : "s"} · ${fmtInt(st.tix)} tix · ${signed(st.profit)} profit (${pct(st.roi)} ROI) · ${st.wins} of ${st.n} made money · ${signed(st.perTix)}/ticket${st.last ? ` · last sold ${fmtDate(st.last)}` : ""}`;
+  function history(e) {
+    const rows = pastSales(e.artists && e.artists.length ? e.artists : [e.event_name]);
+    const st = stats(rows);
+    const heldQ = Math.max(0, ...(e.artists || []).map((a) => matchName(held, a)));
+    if (!st && !heldQ) return "";
+    const v = st ? verdict(st) : null;
+    const city = lc((e.city || "").split(",")[0]), venue = lc(e.venue);
+    const local = st ? stats(rows.filter((r) => (venue && lc(r.venue) === venue) || (city && lc(r.city).startsWith(city)))) : null;
+    const venues = st ? [...new Set(rows.map((r) => r.venue).filter(Boolean))].slice(0, 3).join(", ") : "";
+    return h("div", { class: "history" },
+      h("div", { class: "history-head" },
+        h("span", { class: "muted small", text: "Your history" }),
+        v ? h("span", { class: `pill ${v.c}`, text: v.t }) : "",
+        heldQ ? h("span", { class: "pill warn", text: `You hold ${fmtInt(heldQ)} now` }) : ""),
+      st ? h("div", { class: `small ${st.profit < 0 ? "down" : st.roi >= 0.2 ? "up" : ""}`, text: statLine(st) }) : "",
+      local && local.n !== st.n ? h("div", { class: "small", text: `At this venue/city: ${statLine(local)}` }) : local ? h("div", { class: "muted small", text: "All of these were at this venue/city." }) : st ? h("div", { class: "muted small", text: `Not sold here before${venues ? ` (sold at ${venues})` : ""}.` }) : "");
+  }
+  const pillFor = (a) => {
+    const hq = matchName(held, a), st = stats(pastSales([a]));
+    const tip = [hq ? `You hold ${hq} tickets` : "", st ? statLine(st) : ""].filter(Boolean).join(" · ");
+    const c = hq ? "warn" : st ? (st.profit < 0 ? "bad" : "good") : "";
+    return h("span", { class: `pill ${c}`, title: tip }, a, hq ? ` · ${hq} held` : "", st ? ` · sold ${st.n}× ${pct(st.roi)}` : "");
+  };
 
   async function setFlag(e, field, value) {
     const { error } = await sb.from("deal_emails").update({ [field]: value }).eq("id", e.id);
@@ -46,10 +85,7 @@ async function renderInbox(root, mode) {
 
   function item(e) {
     const u = e.starts_at && e.kind !== "news" ? until(e.starts_at) : null;
-    const flags = (e.artists || []).map((a) => {
-      const hq = matchName(held, a), sq = matchName(sold, a);
-      return h("span", { class: `pill ${hq ? "warn" : sq ? "good" : ""}`, title: hq ? `You hold ${hq} tickets` : sq ? `You've sold ${a} ${sq} times` : "" }, a, hq ? ` · ${hq} held` : sq ? ` · sold ${sq}×` : "");
-    });
+    const flags = (e.artists || []).map(pillFor);
     return h("article", { class: `deal ${e.pinned ? "pinned" : ""} ${e.done ? "is-done" : ""}` },
       h("div", { class: "deal-when" },
         h("span", { class: `pill k-${e.kind}`, text: KINDS[e.kind] }),
@@ -126,16 +162,16 @@ async function renderInbox(root, mode) {
   function dealCard(e) {
     const left = e.ends_at ? Date.parse(e.ends_at) - Date.now() : null;
     const ends = e.ends_at ? (left < 0 ? { t: "Ended", c: "muted" } : left < 48 * 3600000 ? { t: `Ends ${until(e.ends_at).text.replace("in ", "in ")}`, c: "down" } : { t: `Ends ${when.format(new Date(e.ends_at))}`, c: "" }) : { t: "No end date given", c: "muted" };
-    const flags = (e.artists || []).map((a) => { const hq = matchName(held, a), sq = matchName(sold, a); return hq || sq ? h("span", { class: `pill ${hq ? "warn" : "good"}`, text: hq ? `You hold ${hq}` : `Sold ${sq}×` }) : ""; });
     const title = e.event_name || (e.artists || [])[0] || e.subject;
     const where = [e.venue, e.city].filter(Boolean).join(", ");
     return h("article", { class: `offer ${e.pinned ? "pinned" : ""} ${e.done ? "is-done" : ""}` },
       h("div", { class: "offer-hit" }, h("b", { text: e.discount || "Offer" }), h("span", { class: `small ${ends.c}`, text: ends.t })),
       h("div", { class: "offer-body" },
-        h("div", { class: "offer-title" }, h("b", { text: title }), flags),
+        h("div", { class: "offer-title" }, h("b", { text: title })),
         h("div", { class: "muted small", text: [where, e.event_dates].filter(Boolean).join(" · ") || e.sender_name || "" }),
         e.summary ? h("div", { class: "small", text: e.summary }) : "",
         e.buy_note ? h("div", { class: "small meh", text: e.buy_note }) : "",
+        history(e),
         (e.codes || []).length ? h("div", { class: "deal-tags" }, h("span", { class: "muted small", text: "Code" }), (e.codes || []).map(copy)) : h("div", { class: "muted small", text: "No code needed" })),
       h("div", { class: "deal-actions" },
         ok(e.buy_link) ? h("a", { class: "btn small primary", href: e.buy_link, target: "_blank", rel: "noopener noreferrer", text: `Buy on ${siteOf(e)} ↗` })
@@ -196,7 +232,7 @@ async function renderInbox(root, mode) {
         h("h1", { text: "Deals" }),
         h("p", { class: "sub", text: `Discounts, promo codes, BOGO and free-ticket offers from ${MAILBOX}, with the Ticketmaster, AXS or SeatGeek page to use them on. ${fmtInt(activeN)} active.` }))),
       h("div", { class: "stack" },
-        card("Ticket deals", dealBox, "Scanned three times a day. Sorted by which ends first. Yellow means you hold tickets for that artist, green means you've sold them. Tap a code to copy it.")));
+        card("Ticket deals", dealBox, "Scanned three times a day. Sorted by which ends first. Each deal shows your past results for that artist (sales, profit, ROI, how many made money) and whether you sold at that venue or city. Tap a code to copy it.")));
     paintDeals();
     arrange(root, "deals2");
     return;
@@ -208,7 +244,7 @@ async function renderInbox(root, mode) {
         h("h1", { text: "Signups" }),
         h("p", { class: "sub", text: `Presales you have to register for first (artist presale sign-ups, Verified Fan, Seated), pulled out of ${MAILBOX}. ${fmtInt(openN)} open.` }))),
       h("div", { class: "stack" },
-        card("Presale sign-ups", signBox, "Sorted by the date in the email (sign-up deadline or presale start). Once you've registered, tap Done. Yellow means you hold tickets for that artist, green means you've sold them."),
+        card("Presale sign-ups", signBox, "Sorted by the date in the email (sign-up deadline or presale start). Once you've registered, tap Done. Yellow means you hold tickets for that artist; sold artists show your ROI (green made money, red lost money)."),
         card("Sign up for more presales", trackerBox, "Only places that aren't emailing you yet are listed. Live Nation, Ticketmaster, AEG, Goldenvoice, Bowery, AXS, SeatGeek, Bandsintown, MSG, Barclays, MetLife and others already are.")));
     trackerBox.replaceChildren(tracker());
     paintSignups();
@@ -221,7 +257,7 @@ async function renderInbox(root, mode) {
       h("h1", { text: "Presales" }),
       h("p", { class: "sub", text: `Presale codes and on-sales pulled out of ${MAILBOX}.${upcoming ? ` ${upcoming === 1 ? "1 presale starts" : `${upcoming} presales start`} in the next 48 hours.` : ""}` }))),
     h("div", { class: "stack" },
-      card("Presales and on-sales", listBox, "Sorted every few hours. Presales you have to register for first are on the Signups page. Artists you hold tickets for are marked in yellow, ones you've sold in green. Tap a code to copy it.")));
+      card("Presales and on-sales", listBox, "Sorted every few hours. Presales you have to register for first are on the Signups page. Artists you hold tickets for are marked in yellow; ones you've sold show your ROI (green made money, red lost money; hover for details). Tap a code to copy it.")));
   paint();
   arrange(root, "deals");
 }
