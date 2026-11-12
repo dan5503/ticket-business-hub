@@ -176,7 +176,21 @@ addEventListener("visibilitychange", async () => {
 /* =========================================================
    Page frame: filters, KPIs, tabs
    ========================================================= */
+// Repainting rebuilds the page, so remember which search box had focus (with its exact text and cursor)
+// and put it back afterwards. Without this the cursor jumps to the start and trailing spaces vanish mid-typing.
 function paint() {
+  const a = document.activeElement, keep = a && a.dataset && a.dataset.keep
+    ? { key: a.dataset.keep, value: a.value, start: a.selectionStart, end: a.selectionEnd } : null;
+  paintPage();
+  if (!keep) return;
+  const el = rootEl && rootEl.querySelector(`[data-keep="${keep.key}"]`);
+  if (!el) return;
+  el.value = keep.value;
+  el.focus({ preventScroll: true });
+  try { el.setSelectionRange(keep.start, keep.end); } catch {}
+}
+
+function paintPage() {
   const root = rootEl;
   if (!ALL.length) {
     root.replaceChildren(h("div", { class: "card empty" },
@@ -259,8 +273,8 @@ function filterBar() {
     el.onchange = () => { F[key] = el.value; F.preset = "custom"; UI.filtersTouched = true; paint(); };
     return h("div", { class: "f" }, h("label", { for: id, text: label }), el);
   };
-  const q = h("input", { type: "search", id: "f-q", placeholder: "Artist, venue, order #…", value: F.q });
-  let qt; q.oninput = () => { clearTimeout(qt); qt = setTimeout(() => { F.q = q.value.trim(); UI.filtersTouched = true; UI.salesPage = 0; paint(); document.getElementById("f-q")?.focus(); }, 350); };
+  const q = h("input", { type: "search", id: "f-q", placeholder: "Artist, venue, order #…", value: F.q, "data-keep": "f-q" });
+  let qt; q.oninput = () => { clearTimeout(qt); qt = setTimeout(() => { F.q = q.value.trim(); UI.filtersTouched = true; UI.salesPage = 0; paint(); }, 350); };
   const presets = [["month", "Month"], ["yearpick", "Year"], ["30d", "Last 30 days"], ["all", "All time"], ["custom", "Custom dates"]];
   const anyFilter = UI.filtersTouched;
   const activeCount = [F.artist, F.venue, F.account, F.q].filter(Boolean).length + (F.preset === "custom" ? 1 : 0);
@@ -512,7 +526,7 @@ function trendOf(rs) {
 function entityList(kind, rows) {
   const held = kind === "artist" ? holdings() : null;
   const groups = groupBy(rows, (r) => r[kind]).map((g) => ({ ...g, trend: trendOf(g.rows), avgCost: g.tickets ? g.cost / g.tickets : null, left: held ? held.get(lc(g.key))?.left || 0 : null }));
-  const q = h("input", { type: "search", placeholder: `Find ${KIND[kind][2]}`, value: UI.entQ, style: { maxWidth: "260px" } });
+  const q = h("input", { type: "search", placeholder: `Find ${KIND[kind][2]}`, value: UI.entQ, "data-keep": `ent-${kind}`, style: { maxWidth: "260px" } });
   let qt; q.oninput = () => { clearTimeout(qt); qt = setTimeout(() => { UI.entQ = q.value.trim(); paint(); }, 300); };
   const list = sortRows(groups.filter((g) => !UI.entQ || g.key.toLowerCase().includes(UI.entQ.toLowerCase())), UI.entSort);
   const max = Math.max(1, ...list.map((g) => Math.abs(g.profit)));
