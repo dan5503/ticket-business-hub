@@ -3,6 +3,8 @@
    Dark, dense, numbers first. Green = profit, red = loss.
    ========================================================= */
 @font-face { font-family: "Archivo"; src: url("fonts/archivo.woff2") format("woff2-variations"), url("fonts/archivo.woff2") format("woff2"); font-weight: 100 900; font-stretch: 62% 125%; font-display: swap; }
+@font-face { font-family: "Onest"; src: url("fonts/onest.woff2") format("woff2-variations"), url("fonts/onest.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
+@font-face { font-family: "Bricolage"; src: url("fonts/bricolage.woff2") format("woff2-variations"), url("fonts/bricolage.woff2") format("woff2"); font-weight: 200 800; font-stretch: 75% 100%; font-display: swap; }
 @font-face { font-family: "JB Mono"; src: url("fonts/jbmono.woff2") format("woff2-variations"), url("fonts/jbmono.woff2") format("woff2"); font-weight: 100 800; font-display: swap; }
 
 :root {
@@ -190,7 +192,7 @@ th.r, td.r { text-align: right; }
 td.num, td.r { font-family: var(--mono); }
 tbody tr:hover { background: #121924; }
 tbody tr:last-child td { border-bottom: none; }
-td .sub { display: block; color: var(--muted); font-size: 11px; font-family: "Archivo", sans-serif; margin-top: 1px; }
+td .sub { display: block; color: var(--muted); font-size: 11px; font-family: var(--sans); margin-top: 1px; }
 td.strong, td .strong { font-weight: 600; }
 .link-like { color: var(--text); border-bottom: 1px dotted #4a5869; cursor: pointer; }
 .link-like:hover { color: var(--accent); border-bottom-color: var(--accent); }
@@ -484,3 +486,128 @@ select.auto-w { width: auto; min-width: 200px; }
 .offer-title { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 15px; }
 .offer-title .pill { margin-left: 0; }
 @media (max-width: 760px) { .offer { grid-template-columns: 1fr; gap: 8px; } .offer-hit { flex-direction: row; align-items: baseline; gap: 10px; } }
+
+
+/* =========================================================
+   v2 look: bigger, livelier type and colour that carries meaning.
+   Onest for reading, Bricolage Grotesque for headings and headline numbers,
+   JetBrains Mono kept for table figures so columns line up.
+   ========================================================= */
+:root {
+  --sans: "Onest", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  --display: "Bricolage", "Onest", ui-sans-serif, system-ui, sans-serif;
+  font-family: var(--sans);
+  --bg: #070a12;
+  --panel: #0d1320;
+  --panel-2: #141c2c;
+  --line: #1d2738;
+  --line-2: #2b3950;
+  --text: #f2f6fc;
+  --text-2: #c9d3e1;
+  --muted: #8d99ab;
+  --accent: #5b9dff;  --accent-soft: rgba(91,157,255,.16);
+  --up: #22e39a;      --up-soft: rgba(34,227,154,.14);
+  --down: #ff4d6d;    --down-soft: rgba(255,77,109,.14);
+  --meh: #ffb547;     --meh-soft: rgba(255,181,71,.15);
+  --violet: #a78bfa;  --violet-soft: rgba(167,139,250,.15);
+  --cyan: #2dd4f0;    --cyan-soft: rgba(45,212,240,.14);
+  --gold: #ffc53d;
+  --r: 14px; --r-sm: 9px;
+}
+body { font-size: 15px; line-height: 1.5;
+  background: radial-gradient(1200px 500px at 10% -10%, rgba(91,157,255,.10), transparent 60%),
+              radial-gradient(900px 420px at 95% -5%, rgba(167,139,250,.08), transparent 60%), var(--bg);
+  background-attachment: fixed; }
+h1 { font-family: var(--display); font-size: 30px; font-weight: 750; letter-spacing: -0.02em; line-height: 1.1; }
+h2 { font-size: 16px; }
+h3 { font-size: 14px; }
+.small { font-size: 13px; }
+.page-head .sub { font-size: 14px; color: var(--text-2); margin-top: 6px; }
+.lbl, label, .stat .label { font-size: 11.5px; color: var(--muted); }
+
+/* buttons & inputs */
+button, .btn { font-size: 14px; min-height: 36px; padding: 6px 14px; border-radius: var(--r-sm); font-weight: 600; }
+button.primary, .btn.primary { background: linear-gradient(180deg, #6aa8ff, #3f86ff); border-color: #4a8dff; box-shadow: 0 4px 14px -6px rgba(91,157,255,.7); }
+button.primary:hover, .btn.primary:hover { background: linear-gradient(180deg, #7bb2ff, #4a8dff); }
+button.icon { font-size: 13px; min-height: 30px; }
+input, select, textarea { font-size: 14px; min-height: 36px; padding: 6px 11px; background: #0a101b; }
+input:focus, select:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); outline: none; }
+
+/* navigation */
+.nav a { font-family: var(--sans); font-size: 14px; letter-spacing: 0; text-transform: none; font-weight: 600; color: var(--text-2); padding: 7px 12px; border-radius: 9px; }
+.nav a.active { color: #fff; background: var(--accent-soft); box-shadow: inset 0 0 0 1px rgba(91,157,255,.45); }
+.tabs a { font-family: var(--sans); font-size: 14px; letter-spacing: 0; text-transform: none; font-weight: 600; color: var(--text-2); padding: 10px 14px; }
+.tabs a.active { color: #fff; border-bottom: 3px solid transparent; border-image: linear-gradient(90deg, var(--accent), var(--violet)) 1; }
+.tabs .count { font-size: 11.5px; font-weight: 700; background: var(--down); color: #fff; }
+
+/* cards */
+.card, .kpi, .stat {
+  background: linear-gradient(180deg, rgba(255,255,255,.025), rgba(255,255,255,0) 40%), var(--panel);
+  border: 1px solid var(--line); border-radius: var(--r);
+  box-shadow: 0 1px 0 rgba(255,255,255,.04) inset, 0 10px 30px -18px rgba(0,0,0,.8);
+}
+.card { padding: 16px 18px 18px; }
+.card-head { margin-bottom: 14px; min-height: 30px; }
+.card-title { font-family: var(--display); font-size: 18px; font-weight: 700; letter-spacing: -0.01em; text-transform: none; color: var(--text); display: inline-flex; align-items: center; gap: 10px; }
+.card-title::before { content: ""; width: 4px; height: 18px; border-radius: 3px; background: linear-gradient(180deg, var(--accent), var(--violet)); }
+.card .note-line { font-size: 13px; color: var(--muted); margin-top: 12px; }
+
+/* headline numbers */
+.kpi, .stat { padding: 16px 18px; }
+.kpi .v, .stat .value, .card.window .big { font-family: var(--display); font-weight: 750; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.kpi .v { font-size: 30px; margin-top: 8px; }
+.kpi.big .v, .card.window .big { font-size: 38px; }
+.stat .value { font-size: 27px; margin-top: 8px; }
+.kpi .f, .stat .foot { font-size: 13px; color: var(--text-2); }
+/* colour the whole tile when its number is good or bad, so it catches the eye */
+.kpi:has(.v.up), .kpi:has(.v.pos), .stat:has(.value.up), .stat:has(.value.pos) {
+  border-color: rgba(34,227,154,.38); background: linear-gradient(160deg, rgba(34,227,154,.13), rgba(34,227,154,0) 60%), var(--panel); }
+.kpi:has(.v.down), .kpi:has(.v.neg), .stat:has(.value.down), .stat:has(.value.neg) {
+  border-color: rgba(255,77,109,.38); background: linear-gradient(160deg, rgba(255,77,109,.13), rgba(255,77,109,0) 60%), var(--panel); }
+.kpi:has(.v.meh), .stat:has(.value.meh) {
+  border-color: rgba(255,181,71,.38); background: linear-gradient(160deg, rgba(255,181,71,.12), rgba(255,181,71,0) 60%), var(--panel); }
+.kpi.tag { border-color: rgba(255,197,61,.5); background: linear-gradient(160deg, rgba(255,197,61,.16), rgba(255,197,61,0) 60%), var(--panel); }
+.up, .pos { text-shadow: 0 0 18px rgba(34,227,154,.25); }
+.down, .neg { text-shadow: 0 0 18px rgba(255,77,109,.22); }
+
+/* segmented controls & chips */
+.seg, .chips { border-color: var(--line-2); background: #0a101b; padding: 3px; }
+.seg button, .chips button { font-family: var(--sans); font-size: 13px; letter-spacing: 0; text-transform: none; font-weight: 600; min-height: 28px; padding: 2px 12px; color: var(--text-2); }
+.seg button.on, .chips button.on { background: var(--accent); color: #fff; box-shadow: 0 2px 10px -4px rgba(91,157,255,.8); }
+
+/* tables */
+table { font-size: 14px; }
+th, td { padding: 9px 12px; }
+th { font-family: var(--sans); font-size: 12px; letter-spacing: .02em; text-transform: none; font-weight: 650; color: var(--muted); background: var(--panel); }
+tbody tr:hover td { background: rgba(91,157,255,.06); }
+td .sub { font-size: 12.5px; }
+
+/* pills: filled and colour-coded */
+.pill { font-family: var(--sans); font-size: 11.5px; letter-spacing: .01em; text-transform: none; font-weight: 700; padding: 2px 9px; border-radius: 99px; border: 1px solid transparent; background: rgba(255,255,255,.07); color: var(--text-2); }
+.pill.good, .pill.up, .pill.k-onsale { background: var(--up-soft); color: var(--up); border-color: rgba(34,227,154,.35); }
+.pill.bad, .pill.down { background: var(--down-soft); color: var(--down); border-color: rgba(255,77,109,.35); }
+.pill.meh, .pill.warn, .pill.k-deal { background: var(--meh-soft); color: var(--meh); border-color: rgba(255,181,71,.4); }
+.pill.k-presale { background: var(--accent-soft); color: var(--accent); border-color: rgba(91,157,255,.4); }
+.pill.k-signup { background: var(--violet-soft); color: var(--violet); border-color: rgba(167,139,250,.4); }
+
+/* deals & presales */
+.offer { border-radius: var(--r); background: linear-gradient(120deg, rgba(34,227,154,.06), rgba(34,227,154,0) 35%), var(--panel-2); border-color: var(--line-2); }
+.offer-hit b { font-family: var(--display); font-size: 24px; font-weight: 800; }
+.offer-title { font-size: 16.5px; }
+.code { font-size: 13px; }
+.spot { font-size: 12px; padding: 2px 7px; }
+
+/* labels & remaining terminal-style bits, in the new type */
+.lbl, label, .stat .label, .kv .k, .cat-title, .insight-strip > b, .book-banner b {
+  font-family: var(--sans); font-size: 12px; letter-spacing: .07em; font-weight: 650; text-transform: uppercase; color: var(--muted); }
+.cat-title { font-size: 13px; color: var(--text-2); }
+.preset { font-family: var(--sans); font-size: 13px; letter-spacing: 0; text-transform: none; font-weight: 600; min-height: 30px; padding: 3px 14px; color: var(--text-2); }
+.preset.on, .preset[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+.step-label { font-family: var(--display); font-size: 16px; font-weight: 700; }
+.rating { font-family: var(--sans); font-size: 11.5px; letter-spacing: .02em; border-radius: 99px; padding: 2px 9px; }
+.panel { background: linear-gradient(180deg, rgba(255,255,255,.025), rgba(255,255,255,0) 40%), var(--panel); border-color: var(--line); border-radius: var(--r);
+  box-shadow: 0 1px 0 rgba(255,255,255,.04) inset, 0 10px 30px -18px rgba(0,0,0,.8); }
+.panel-title { font-family: var(--display); font-size: 18px; font-weight: 700; letter-spacing: -0.01em; text-transform: none; color: var(--text); }
+.chart text { font-size: 11.5px; }
+.tape-track { font-size: 12.5px; }
+.kpi:has(.eye) > :first-child { padding-right: 58px; }
