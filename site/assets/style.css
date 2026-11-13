@@ -611,3 +611,39 @@ td .sub { font-size: 12.5px; }
 .chart text { font-size: 11.5px; }
 .tape-track { font-size: 12.5px; }
 .kpi:has(.eye) > :first-child { padding-right: 58px; }
+
+/* sizing: halfway between the original compact look and the large v2 sizes */
+body { font-size: 14.25px; }
+h1 { font-size: 25px; }
+h2 { font-size: 15px; }
+.small { font-size: 12.5px; }
+.page-head .sub { font-size: 13.25px; }
+.lbl, label, .stat .label, .kv .k, .insight-strip > b, .book-banner b { font-size: 11.25px; }
+.cat-title { font-size: 12.25px; }
+button, .btn { font-size: 13.25px; min-height: 33px; padding: 5px 12px; }
+button.icon { font-size: 12.5px; min-height: 28px; }
+input, select, textarea { font-size: 13.25px; min-height: 33px; padding: 5px 10px; }
+.nav a { font-size: 13px; padding: 6px 11px; }
+.tabs a { font-size: 13px; padding: 9px 13px; }
+.card { padding: 14px 16px 16px; }
+.card-head { margin-bottom: 12px; }
+.card-title, .panel-title { font-size: 16px; }
+.card-title::before { height: 16px; }
+.card .note-line { font-size: 12.25px; }
+.kpi, .stat { padding: 14px 16px; }
+.kpi .v { font-size: 26px; margin-top: 7px; }
+.kpi.big .v, .card.window .big { font-size: 33px; }
+.stat .value { font-size: 23.5px; margin-top: 7px; }
+.kpi .f, .stat .foot { font-size: 12.25px; }
+.seg button, .chips button { font-size: 12.25px; min-height: 26px; padding: 2px 11px; }
+.preset { font-size: 12.25px; min-height: 28px; padding: 3px 13px; }
+.step-label { font-size: 15px; }
+table { font-size: 13.25px; }
+th, td { padding: 8px 11px; }
+th { font-size: 11.5px; }
+td .sub { font-size: 11.75px; }
+.pill { font-size: 11px; padding: 1px 8px; }
+.offer-hit b { font-size: 21px; }
+.offer-title { font-size: 15.5px; }
+.chart text { font-size: 11px; }
+.tape-track { font-size: 12px; }
