@@ -133,22 +133,32 @@ const plt = makePortfolio({ base: "plt", table: "plt_sales_clean", tabs: PLT_TAB
 
 /* ---------- routing ---------- */
 const views = { learning: renderLearning, inventory: renderInventory, spotify: renderSpotify, presales: renderPresales, signups: renderSignups, deals: renderDeals, discord: renderDiscord, links: renderLinks };
-let cleanup = null, lastKey = "";
+let cleanup = null, lastKey = "", seq = 0, page = null;
+// Each page draws into its own box. If you switch pages while a slow one is still loading,
+// the slow one finishes into its old (now detached) box instead of covering the page you picked.
 async function route() {
+  const my = ++seq;
   const hash = decodeURIComponent(location.hash.slice(1));
   const [top, ...rest] = hash.split("/");
   const key = views[top] ? top : top === "plt" ? "plt" : "p";
   $$(".nav a").forEach((a) => a.classList.toggle("active", a.dataset.nav === key));
   $("#tape").classList.toggle("hidden", key === "plt"); // your personal ticker stays off the company page
   if (typeof cleanup === "function") cleanup();
-  const root = $("#view");
-  if (key !== lastKey) { root.replaceChildren(h("div", { class: "empty" }, "Loading…")); window.scrollTo(0, 0); }
+  cleanup = null;
+  const view = $("#view");
+  if (key !== lastKey || !page) {
+    page = h("div", { class: "page" }, h("div", { class: "empty" }, "Loading…"));
+    view.replaceChildren(page);
+    window.scrollTo(0, 0);
+  }
   lastKey = key;
+  const root = page;
   try {
-    cleanup = key === "p" ? await mine.renderPortfolio(root, rest) : key === "plt" ? await plt.renderPortfolio(root, rest) : await views[key](root);
+    const c = key === "p" ? await mine.renderPortfolio(root, rest) : key === "plt" ? await plt.renderPortfolio(root, rest) : await views[key](root);
+    if (my === seq) cleanup = c; else if (typeof c === "function") c();
   } catch (err) {
     console.error(err);
-    root.replaceChildren(h("div", { class: "card empty" }, h("h2", { text: "Couldn't load this page" }), h("p", { text: err.message || String(err) })));
+    if (my === seq) root.replaceChildren(h("div", { class: "card empty" }, h("h2", { text: "Couldn't load this page" }), h("p", { text: err.message || String(err) })));
   }
 }
 addEventListener("hashchange", route);
