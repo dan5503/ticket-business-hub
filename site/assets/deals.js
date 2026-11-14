@@ -7,7 +7,7 @@ import { sb, h, fetchAll, fmtInt, fmtDate, fmtMoney, toast, niceError, todayISO 
 import { arrange } from "./layout.js";
 
 const MAILBOX = "danielbehman@primelioninc.com";
-const UI = { tab: "presale", show: 60, dtab: "active", dshow: 40, stab: "open", sshow: 60 };
+const UI = { tab: "presale", show: 60, dtab: "active", dshow: 40, stab: "open", sshow: 60, sort: { presales: "smart", deals: "smart", signups: "smart" } };
 const KINDS = { presale: "Presale", onsale: "On sale", deal: "Deal", signup: "Sign-up", news: "Newsletter" };
 const SIDE = new Set(["deal", "signup"]); // kinds that have their own page, kept off the Presales lists
 const lc = (v) => (v || "").trim().toLowerCase();
@@ -56,6 +56,29 @@ async function renderInbox(root, mode) {
   const signed = (v) => `${v < 0 ? "−" : "+"}${fmtMoney(Math.abs(v))}`;
   const verdict = (st) => (st.roi == null ? { t: "No cost on file", c: "" } : st.roi >= 0.2 ? { t: "Good returns", c: "good" } : st.roi >= 0 ? { t: "Thin returns", c: "warn" } : { t: "Lost money", c: "bad" });
   const statLine = (st) => `${fmtInt(st.n)} sale${st.n === 1 ? "" : "s"} · ${fmtInt(st.tix)} tix · ${signed(st.profit)} profit (${pct(st.roi)} ROI) · ${st.wins} of ${st.n} made money${st.last ? ` · last sold ${fmtDate(st.last)}` : ""}`;
+  // ---------- sort menu shared by the three lists ----------
+  const SORTS = [["smart", "Smart order"], ["starts", "Starts soonest"], ["ends", "Ends soonest"], ["newest", "Newest email"], ["oldest", "Oldest email"],
+    ["discount", "Biggest discount"], ["profit", "Best past profit"], ["roi", "Best past ROI"], ["sales", "Most past sales"], ["artist", "Artist A–Z"]];
+  const t = (v, far = 8e15) => (v ? Date.parse(v) || far : far);
+  const pastCache = new Map();
+  const past = (e) => { const k = (e.artists || []).join("|"); if (!pastCache.has(k)) pastCache.set(k, stats(pastSales(e.artists)) || { n: 0, profit: -1e12, roi: -1e9 }); return pastCache.get(k); };
+  const disc = (e) => { const m = String(e.discount || "").match(/(\d+(?:\.\d+)?)\s*%/) || String(e.discount || "").match(/\$\s*(\d+(?:\.\d+)?)/); return m ? +m[1] : -1; };
+  function applySort(list, which, smart) {
+    const k = UI.sort[which];
+    const by = {
+      smart, starts: (a, b) => t(a.starts_at) - t(b.starts_at), ends: (a, b) => t(a.ends_at) - t(b.ends_at),
+      newest: (a, b) => t(b.received_at, 0) - t(a.received_at, 0), oldest: (a, b) => t(a.received_at) - t(b.received_at),
+      discount: (a, b) => disc(b) - disc(a), profit: (a, b) => past(b).profit - past(a).profit, roi: (a, b) => (past(b).roi ?? -1e9) - (past(a).roi ?? -1e9),
+      sales: (a, b) => past(b).n - past(a).n, artist: (a, b) => (a.artists?.[0] || a.event_name || a.subject || "").localeCompare(b.artists?.[0] || b.event_name || b.subject || ""),
+    }[k] || smart;
+    return list.sort(by);
+  }
+  const sortMenu = (which, repaint, opts = SORTS) => {
+    const sel = h("select", { "aria-label": "Sort by", class: "auto-w" }, opts.map(([v, txt]) => h("option", { value: v, text: `Sort: ${txt}`, selected: UI.sort[which] === v })));
+    sel.onchange = () => { UI.sort[which] = sel.value; repaint(); };
+    return sel;
+  };
+  const NO_DISC = SORTS.filter(([k]) => k !== "discount");
   const priceLine = (st) => `Bought avg ${fmtMoney(st.buyEach)}/ticket → sold avg ${fmtMoney(st.sellEach)}/ticket (${signed(st.perTix)} each)`;
   const seat = (r) => [r.section ? `Sec ${r.section}` : "", r.row_name ? `Row ${r.row_name}` : ""].filter(Boolean).join(" · ") || "—";
   function salesTable(rows) {
@@ -151,11 +174,11 @@ async function renderInbox(root, mode) {
       done: ["Done", (e) => e.done && !SIDE.has(e.kind)],
     };
     const [, pick] = tabs[UI.tab];
-    const list = emails.filter(pick).sort((a, b) =>
+    const list = applySort(emails.filter(pick), "presales", (a, b) =>
       (b.pinned - a.pinned) || (["presale", "onsale"].includes(UI.tab) ? (Date.parse(a.starts_at || "2999-01-01") - Date.parse(b.starts_at || "2999-01-01")) : (Date.parse(b.received_at) - Date.parse(a.received_at))));
     listBox.replaceChildren(
       h("div", { class: "seg", role: "group", "aria-label": "Show" }, Object.entries(tabs).map(([k, [t, f]]) =>
-        h("button", { type: "button", class: UI.tab === k ? "on" : "", onclick: () => { UI.tab = k; UI.show = 60; paint(); } }, `${t} ${fmtInt(emails.filter(f).length)}`))),
+        h("button", { type: "button", class: UI.tab === k ? "on" : "", onclick: () => { UI.tab = k; UI.show = 60; paint(); } }, `${t} ${fmtInt(emails.filter(f).length)}`))), h("div", { class: "list-sort" }, sortMenu("presales", paint, NO_DISC)),
       list.length ? h("div", { class: "deal-list mt" }, list.slice(0, UI.show).map(item)) :
         h("p", { class: "muted mt", text: emails.length ? "Nothing here right now." : `Nothing sorted yet. New presale and deal emails from ${MAILBOX} show up here every couple of hours.` }),
       list.length > UI.show ? h("button", { type: "button", class: "mt", text: `Show more (${list.length - UI.show} left)`, onclick: () => { UI.show += 60; paint(); } }) : "");
@@ -243,10 +266,10 @@ async function renderInbox(root, mode) {
       done: ["Done", (e) => e.done],
     };
     const [, pick] = tabs[UI.dtab];
-    const list = deals.filter(pick).sort((a, b) => (b.pinned - a.pinned) || (Date.parse(a.ends_at || "2999-01-01") - Date.parse(b.ends_at || "2999-01-01")) || (Date.parse(b.received_at) - Date.parse(a.received_at)));
+    const list = applySort(deals.filter(pick), "deals", (a, b) => (b.pinned - a.pinned) || (Date.parse(a.ends_at || "2999-01-01") - Date.parse(b.ends_at || "2999-01-01")) || (Date.parse(b.received_at) - Date.parse(a.received_at)));
     dealBox.replaceChildren(
       h("div", { class: "seg", role: "group", "aria-label": "Show" }, Object.entries(tabs).map(([k, [t, f]]) =>
-        h("button", { type: "button", class: UI.dtab === k ? "on" : "", onclick: () => { UI.dtab = k; UI.dshow = 40; paintDeals(); } }, `${t} ${fmtInt(deals.filter(f).length)}`))),
+        h("button", { type: "button", class: UI.dtab === k ? "on" : "", onclick: () => { UI.dtab = k; UI.dshow = 40; paintDeals(); } }, `${t} ${fmtInt(deals.filter(f).length)}`))), h("div", { class: "list-sort" }, sortMenu("deals", paintDeals)),
       list.length ? h("div", { class: "offer-list mt" }, list.slice(0, UI.dshow).map(dealCard)) :
         h("p", { class: "muted mt", text: deals.length ? "Nothing here right now." : "No deals yet. The inbox is scanned for discounts and promo codes three times a day." }),
       list.length > UI.dshow ? h("button", { type: "button", class: "mt", text: `Show more (${list.length - UI.dshow} left)`, onclick: () => { UI.dshow += 40; paintDeals(); } }) : "");
@@ -265,10 +288,10 @@ async function renderInbox(root, mode) {
       done: ["Done", (e) => e.done],
     };
     const [, pick] = tabs[UI.stab];
-    const list = signs.filter(pick).sort((a, b) => (b.pinned - a.pinned) || (Date.parse(a.starts_at || "2999-01-01") - Date.parse(b.starts_at || "2999-01-01")) || (Date.parse(b.received_at) - Date.parse(a.received_at)));
+    const list = applySort(signs.filter(pick), "signups", (a, b) => (b.pinned - a.pinned) || (Date.parse(a.starts_at || "2999-01-01") - Date.parse(b.starts_at || "2999-01-01")) || (Date.parse(b.received_at) - Date.parse(a.received_at)));
     signBox.replaceChildren(
       h("div", { class: "seg", role: "group", "aria-label": "Show" }, Object.entries(tabs).map(([k, [t, f]]) =>
-        h("button", { type: "button", class: UI.stab === k ? "on" : "", onclick: () => { UI.stab = k; UI.sshow = 60; paintSignups(); } }, `${t} ${fmtInt(signs.filter(f).length)}`))),
+        h("button", { type: "button", class: UI.stab === k ? "on" : "", onclick: () => { UI.stab = k; UI.sshow = 60; paintSignups(); } }, `${t} ${fmtInt(signs.filter(f).length)}`))), h("div", { class: "list-sort" }, sortMenu("signups", paintSignups, NO_DISC)),
       list.length ? h("div", { class: "deal-list mt" }, list.slice(0, UI.sshow).map(item)) :
         h("p", { class: "muted mt", text: signs.length ? "Nothing here right now." : "No presale sign-ups yet. Emails asking you to register for a presale land here." }),
       list.length > UI.sshow ? h("button", { type: "button", class: "mt", text: `Show more (${list.length - UI.sshow} left)`, onclick: () => { UI.sshow += 60; paintSignups(); } }) : "");

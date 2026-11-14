@@ -1,6 +1,7 @@
 import { sb, $, $$, h, requireSession, startIdleTimer, clearDataCache, toast, fmtMoney, fmtPct } from "./common.js";
 import { makePortfolio, MY_TABS, PLT_TABS } from "./portfolio.js";
 import { renderInventory } from "./inventory.js";
+import { startSortableTables } from "./sortable.js";
 import { renderDiscord } from "./discord.js";
 import { renderLinks } from "./links.js";
 import { renderSpotify } from "./spotify.js";
@@ -161,5 +162,6 @@ async function route() {
     if (my === seq) root.replaceChildren(h("div", { class: "card empty" }, h("h2", { text: "Couldn't load this page" }), h("p", { text: err.message || String(err) })));
   }
 }
+startSortableTables();
 addEventListener("hashchange", route);
 route();

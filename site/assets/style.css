@@ -688,3 +688,11 @@ tr.lc-click { cursor: pointer; }
 .lc-showall { margin-left: auto; border: 0; border-radius: 8px; padding: 6px 12px; font-weight: 700; cursor: pointer;
   background: var(--accent, #7c5cff); color: #fff; }
 .lc-loading { opacity: .45; transition: opacity .2s; pointer-events: none; }
+
+/* sortable tables + list sort menus */
+table.auto-sort > thead th { cursor: pointer; user-select: none; white-space: nowrap; }
+table.auto-sort > thead th:hover { color: var(--text, #fff); }
+table.auto-sort > thead th::after { content: " ↕"; opacity: .3; font-size: .85em; }
+table.auto-sort > thead th[data-sort-dir="asc"]::after { content: " ▲"; opacity: 1; color: var(--accent, #7c5cff); }
+table.auto-sort > thead th[data-sort-dir="desc"]::after { content: " ▼"; opacity: 1; color: var(--accent, #7c5cff); }
+.list-sort { margin-top: 10px; }
