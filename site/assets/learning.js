@@ -89,7 +89,7 @@ export async function renderLearning(root) {
         pick("Event type", "type", types), (UI.type === "Sports" || UI.sport) && sports.length ? pick("Sport", "sport", sports) : "",
         pick("City", "city", cities), pick("Section", "tier", tiers), pick("Price paid", "price", PRICES),
         UI.book !== "plt" ? pick("Artist kind", "fame", FAME) : "",
-        active ? h("button", { type: "button", class: "ghost", onclick: clearAll }, "Clear") : "")),
+        active ? h("button", { type: "button", class: "ghost", onclick: clearAll }, "Clear") : ""),
       active ? h("div", { class: "lc-active" },
         h("b", { text: "Showing only:" }),
         FILTERS.filter((k) => UI[k]).map((k) => h("button", { type: "button", class: "pill lc-chip", title: "Remove this filter",
