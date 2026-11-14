@@ -4,8 +4,8 @@
 import { sb, h, fmtMoney, fmtInt, fmtPct, niceError } from "./common.js";
 import { arrange } from "./layout.js";
 
-const UI = { book: "mine", period: "all", artist: "", city: "", tier: "", price: "" };
-const BOOKS = [["mine", "My sales"], ["plt", "PLT sales"], ["both", "Mine + PLT"]];
+const UI = { book: "both", period: "all", artist: "", city: "", tier: "", price: "" };
+const BOOKS = [["both", "All sales"], ["mine", "Only mine"], ["plt", "Only PLT"]];
 const PERIODS = [["all", "All time"], ["365", "Last 12 months"], ["90", "Last 90 days"]];
 const PRICES = ["Under $50", "$50–99", "$100–149", "$150–249", "$250–399", "$400–699", "$700+"];
 
@@ -56,6 +56,7 @@ export async function renderLearning(root) {
     filters.replaceChildren(h("section", { class: "card lc-check", "data-move-key": "check a buy" },
       h("div", { class: "card-head" }, h("h2", { class: "card-title", text: "Check a buy" }), h("span", { class: "spacer" }), seg(BOOKS, "book"), seg(PERIODS, "period")),
       h("p", { class: "muted small", text: "Thinking about a buy? Set what you're looking at and everything below shows how buys like it have done." }),
+      h("p", { class: "muted small", text: UI.book === "plt" ? "PLT sales only cover the artists the bosses track, so some strong artists and buyers won't show here." : UI.book === "both" ? "All sales = your sales plus the office's PLT sales, with your sales that also appear in PLT counted once. PLT only covers the artists the bosses track." : "Your sales: everything you've sold, nothing held back." }),
       h("div", { class: "lc-filters" },
         h("div", { class: "lc-field" }, h("span", { class: "lbl", text: "Artist" }), artistIn),
         pick("City", "city", cities), pick("Section", "tier", tiers), pick("Price paid", "price", PRICES),
@@ -73,7 +74,7 @@ export async function renderLearning(root) {
 
     const tile = (label, value, foot, cls = "") => h("div", { class: "stat" }, h("span", { class: "label", text: label }), h("span", { class: `value ${cls}`, text: value }), h("span", { class: "foot", text: foot }));
     const tiles = h("div", { class: "headline inv" },
-      tile("Sales", fmtInt(o.n), `${fmtInt(o.t)} tickets · ${book}`),
+      tile("Sales", fmtInt(o.n), `${fmtInt(o.t)} tickets · ${UI.book === "both" ? "yours + PLT" : book}`),
       tile("Return (ROI)", pct(o.roi), `${money(o.profit)} on ${fmtMoney(o.cost)}`, o.roi >= 0 ? "up" : "down"),
       tile("Win rate", rate(o.win), `${rate(o.loss)} lost money`, o.win >= 0.75 ? "up" : o.win < 0.6 ? "down" : "meh"),
       tile("Profit per ticket", money(o.ppt), "average across all tickets", o.ppt >= 0 ? "up" : "down"),
