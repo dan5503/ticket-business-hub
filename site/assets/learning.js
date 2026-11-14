@@ -4,7 +4,8 @@
 import { sb, h, fmtMoney, fmtInt, fmtPct, niceError } from "./common.js";
 import { arrange } from "./layout.js";
 
-const UI = { book: "both", period: "all", artist: "", city: "", tier: "", price: "" };
+const UI = { book: "both", period: "all", artist: "", city: "", tier: "", price: "", type: "", sport: "", fame: "" };
+const FAME = ["Big names (PLT tracks them)", "Your finds (not in PLT)"];
 const BOOKS = [["both", "All sales"], ["mine", "Only mine"], ["plt", "Only PLT"]];
 const PERIODS = [["all", "All time"], ["365", "Last 12 months"], ["90", "Last 90 days"]];
 const PRICES = ["Under $50", "$50–99", "$100–149", "$150–249", "$250–399", "$400–699", "$700+"];
@@ -12,6 +13,16 @@ const PRICES = ["Under $50", "$50–99", "$100–149", "$150–249", "$250–399
 const pct = (v) => (v == null ? "—" : `${v >= 0 ? "+" : ""}${fmtPct(v * 100, 1)}`);
 const rate = (v) => (v == null ? "—" : fmtPct(v * 100, 0));
 const money = (v) => (v == null ? "—" : `${v >= 0 ? "+" : "-"}${fmtMoney(Math.abs(v))}`);
+
+// Buy score (0–100): return, dollars per ticket, how often it wins, and how much it moves (sales count).
+// 30% return (−30% → 0, +60% → full), 30% profit per ticket (−$20 → 0, +$80 → full), 25% win rate, 15% volume (200+ sales = full).
+const clamp = (v) => Math.max(0, Math.min(1, v));
+export function buyScore(r) {
+  if (!r || !r.n) return null;
+  const vol = clamp(Math.log10(r.n) / Math.log10(200));
+  return Math.round(100 * (0.3 * clamp(((r.roi ?? 0) + 0.3) / 0.9) + 0.3 * clamp(((r.ppt ?? 0) + 20) / 100) + 0.25 * (r.win ?? 0) + 0.15 * vol));
+}
+const scoreTone = (s) => (s == null ? "" : s >= 65 ? "good" : s >= 50 ? "" : s >= 40 ? "meh" : "bad");
 
 export async function renderLearning(root) {
   const filters = h("div");
@@ -28,7 +39,7 @@ export async function renderLearning(root) {
     out.replaceChildren(h("p", { class: "muted", text: "Crunching your sales…" }));
     const from = UI.period === "all" ? null : new Date(Date.now() - Number(UI.period) * 86400000).toISOString().slice(0, 10);
     const { data: r, error } = await sb.rpc("learning_center", {
-      p_book: UI.book, p_from: from, p_to: null, p_artist: UI.artist || null, p_city: UI.city || null, p_tier: UI.tier || null, p_price: UI.price || null,
+      p_book: UI.book, p_from: from, p_to: null, p_artist: UI.artist || null, p_city: UI.city || null, p_tier: UI.tier || null, p_price: UI.price || null, p_type: UI.type || null, p_sport: UI.sport || null, p_fame: UI.fame || null,
     });
     if (my !== seq) return;
     if (error) { out.replaceChildren(h("p", { class: "neg", text: niceError(error) })); return; }
@@ -52,15 +63,18 @@ export async function renderLearning(root) {
   function paintFilters() {
     const cities = (data?.cities || []).slice().sort();
     const tiers = (data?.tiers || []).slice().sort();
-    const active = UI.artist || UI.city || UI.tier || UI.price;
+    const types = (data?.types || []).slice().sort(), sports = (data?.sports || []).slice().sort();
+    const active = UI.artist || UI.city || UI.tier || UI.price || UI.type || UI.sport || UI.fame;
     filters.replaceChildren(h("section", { class: "card lc-check", "data-move-key": "check a buy" },
       h("div", { class: "card-head" }, h("h2", { class: "card-title", text: "Check a buy" }), h("span", { class: "spacer" }), seg(BOOKS, "book"), seg(PERIODS, "period")),
       h("p", { class: "muted small", text: "Thinking about a buy? Set what you're looking at and everything below shows how buys like it have done." }),
       h("p", { class: "muted small", text: UI.book === "plt" ? "PLT sales only cover the artists the bosses track, so some strong artists and buyers won't show here." : UI.book === "both" ? "All sales = your sales plus the office's PLT sales, with your sales that also appear in PLT counted once. PLT only covers the artists the bosses track." : "Your sales: everything you've sold, nothing held back." }),
       h("div", { class: "lc-filters" },
         h("div", { class: "lc-field" }, h("span", { class: "lbl", text: "Artist" }), artistIn),
+        pick("Event type", "type", types), (UI.type === "Sports" || UI.sport) && sports.length ? pick("Sport", "sport", sports) : "",
         pick("City", "city", cities), pick("Section", "tier", tiers), pick("Price paid", "price", PRICES),
-        active ? h("button", { type: "button", class: "ghost", onclick: () => { Object.assign(UI, { artist: "", city: "", tier: "", price: "" }); artistIn.value = ""; load(); } }, "Clear") : "")));
+        UI.book !== "plt" ? pick("Artist kind", "fame", FAME) : "",
+        active ? h("button", { type: "button", class: "ghost", onclick: () => { Object.assign(UI, { artist: "", city: "", tier: "", price: "", type: "", sport: "", fame: "" }); artistIn.value = ""; load(); } }, "Clear") : "")));
   }
 
   // ---------- body ----------
@@ -73,38 +87,43 @@ export async function renderLearning(root) {
     const book = BOOKS.find(([k]) => k === UI.book)[1];
 
     const tile = (label, value, foot, cls = "") => h("div", { class: "stat" }, h("span", { class: "label", text: label }), h("span", { class: `value ${cls}`, text: value }), h("span", { class: "foot", text: foot }));
-    const tiles = h("div", { class: "headline inv" },
+    const tiles = h("div", { class: "headline inv lc-tiles" },
       tile("Sales", fmtInt(o.n), `${fmtInt(o.t)} tickets · ${UI.book === "both" ? "yours + PLT" : book}`),
       tile("Return (ROI)", pct(o.roi), `${money(o.profit)} on ${fmtMoney(o.cost)}`, o.roi >= 0 ? "up" : "down"),
       tile("Win rate", rate(o.win), `${rate(o.loss)} lost money`, o.win >= 0.75 ? "up" : o.win < 0.6 ? "down" : "meh"),
       tile("Profit per ticket", money(o.ppt), "average across all tickets", o.ppt >= 0 ? "up" : "down"),
+      tile("Buy score", String(buyScore(o) ?? "—"), "out of 100 · return, $/ticket, wins, movement", scoreTone(buyScore(o)) === "good" ? "up" : scoreTone(buyScore(o)) === "bad" ? "down" : "meh"),
       tile("Days to sell", o.dts == null ? "—" : `${Math.round(o.dts)}`, "median, bought → sold"));
 
     // ---------- lessons ----------
-    const DIMS = [["tier", "Section"], ["price", "Price paid"], ["lead", "Bought ahead"], ["row", "Row"], ["qty", "Order size"], ["weekday", "Event day"], ["city", "City"]];
+    const DIMS = [["etype", "Event type"], ["tier", "Section"], ["price", "Price paid"], ["lead", "Bought ahead"], ["row", "Row"], ["qty", "Order size"], ["weekday", "Event day"], ["city", "City"]];
     const lessons = [];
     for (const [k, name] of DIMS) {
       const rows = (data[k] || []).filter((r) => r.n >= MIN && r.k !== "Unknown" && r.k !== "Other");
       if (rows.length < 2) continue;
-      const best = rows.reduce((a, b) => (b.roi > a.roi ? b : a)), worst = rows.reduce((a, b) => (b.roi < a.roi ? b : a));
-      lessons.push({ name, best, worst, spread: best.roi - worst.roi });
+      rows.forEach((r) => (r.s = buyScore(r)));
+      const best = rows.reduce((a, b) => (b.s > a.s ? b : a)), worst = rows.reduce((a, b) => (b.s < a.s ? b : a));
+      lessons.push({ name, best, worst, spread: best.s - worst.s });
     }
     lessons.sort((a, b) => b.spread - a.spread);
     const lessonEl = lessons.length ? h("ul", { class: "lc-lessons" }, lessons.slice(0, 7).map((l) =>
       h("li", {},
         h("span", { class: "lbl", text: l.name }),
-        h("span", {}, h("b", { class: "pos", text: l.best.k }), ` returns ${pct(l.best.roi)} (${rate(l.best.win)} win, ${fmtInt(l.best.n)} sales)`),
+        h("span", {}, h("b", { class: "pos", text: l.best.k }), " ", h("span", { class: "pill good", text: `score ${l.best.s}` }), ` ${pct(l.best.roi)}, ${money(l.best.ppt)}/ticket, ${rate(l.best.win)} win, ${fmtInt(l.best.n)} sales`),
         h("span", { class: "muted" }, " vs "),
-        h("span", {}, h("b", { class: l.worst.roi < 0 ? "neg" : "meh", text: l.worst.k }), ` at ${pct(l.worst.roi)} (${rate(l.worst.win)} win, ${fmtInt(l.worst.n)} sales)`)))) :
+        h("span", {}, h("b", { class: l.worst.roi < 0 ? "neg" : "meh", text: l.worst.k }), " ", h("span", { class: `pill ${scoreTone(l.worst.s) || "meh"}`, text: `score ${l.worst.s}` }), ` ${pct(l.worst.roi)}, ${money(l.worst.ppt)}/ticket, ${rate(l.worst.win)} win, ${fmtInt(l.worst.n)} sales`)))) :
       h("p", { class: "muted", text: "Not enough sales in this slice to draw lessons yet." });
 
     // ---------- go for / be careful ----------
     const combos = (data.combos || []).filter((c) => c.n >= Math.max(12, MIN));
+    combos.forEach((c) => (c.s = buyScore(c)));
+    const avgScore = buyScore(o) ?? 50;
     const comboRow = (c) => h("li", {}, h("b", { text: `${c.tier} · ${c.price} · bought ${c.lead.toLowerCase()} ahead` }),
+      h("span", { class: `pill ${scoreTone(c.s)}`, text: `score ${c.s}` }),
       h("span", { class: `pill ${c.roi < 0 ? "bad" : c.roi > avg ? "good" : "meh"}`, text: pct(c.roi) }),
       h("span", { class: "muted small", text: ` ${rate(c.win)} win · ${money(c.ppt)}/ticket · ${fmtInt(c.n)} sales` }));
-    const goFor = combos.filter((c) => c.roi > avg).sort((a, b) => b.roi - a.roi).slice(0, 6);
-    const avoid = combos.filter((c) => c.roi < avg).sort((a, b) => a.roi - b.roi).slice(0, 6);
+    const goFor = combos.filter((c) => c.s > avgScore).sort((a, b) => b.s - a.s).slice(0, 6);
+    const avoid = combos.filter((c) => c.s < avgScore).sort((a, b) => a.s - b.s).slice(0, 6);
     const combosEl = combos.length ? h("div", { class: "lc-two" },
       h("div", {}, h("h3", { class: "pos", text: "Go for" }), goFor.length ? h("ul", { class: "lc-combos" }, goFor.map(comboRow)) : h("p", { class: "muted", text: "Nothing beats the average here yet." })),
       h("div", {}, h("h3", { class: "neg", text: "Be careful with" }), avoid.length ? h("ul", { class: "lc-combos" }, avoid.map(comboRow)) : h("p", { class: "muted", text: "Nothing falls below the average here." }))) :
@@ -133,15 +152,17 @@ export async function renderLearning(root) {
     const maxAbs = (rows) => Math.max(0.01, ...rows.map((r) => Math.abs(r.roi || 0)));
     function breakdown(rows, opts = {}) {
       if (!rows?.length) return h("p", { class: "muted", text: "Nothing here for this slice." });
-      const list = opts.sortByRoi ? rows.slice().sort((a, b) => (b.n >= MIN) - (a.n >= MIN) || b.roi - a.roi) : rows;
+      rows.forEach((r) => (r.s = buyScore(r)));
+      const list = opts.sortByRoi ? rows.slice().sort((a, b) => (b.n >= MIN) - (a.n >= MIN) || b.s - a.s) : rows;
       const m = maxAbs(list.filter((r) => r.n >= MIN));
       return h("div", { class: "table-wrap" }, h("table", { class: "lc-table" },
-        h("thead", {}, h("tr", {}, h("th", { text: opts.label || "Group" }), h("th", { class: "r", text: "Sales" }), h("th", { text: "Return" }),
+        h("thead", {}, h("tr", {}, h("th", { text: opts.label || "Group" }), h("th", { class: "r", text: "Score" }), h("th", { class: "r", text: "Sales" }), h("th", { text: "Return" }),
           h("th", { class: "r", text: "Win rate" }), h("th", { class: "r", text: "Profit / ticket" }), h("th", { class: "r", text: "Days to sell" }), h("th", { class: "r", text: "Total profit" }))),
         h("tbody", {}, list.map((r) => {
           const t = tone(r.roi, r.n), w = Math.min(Math.abs(r.roi || 0) / m, 1) * 100;
           const tr = h("tr", { class: `${t === "few" ? "lc-few" : ""} ${opts.filter ? "lc-click" : ""}` },
             h("td", {}, h("b", { text: r.k }), t === "few" ? h("span", { class: "sub", text: "few sales, take with a grain of salt" }) : ""),
+            h("td", { class: "r" }, h("span", { class: `pill ${t === "few" ? "" : scoreTone(r.s)}`, text: String(r.s ?? "—") })),
             h("td", { class: "r num", text: fmtInt(r.n) }),
             h("td", { class: "lc-bar-cell" }, h("div", { class: "lc-bar" }, h("i", { class: (r.roi || 0) < 0 ? "neg-bar" : t === "good" ? "pos-bar" : t === "meh" ? "meh-bar" : "mid-bar", style: { width: `${w}%` } })),
               h("span", { class: `pill ${t === "few" ? "" : t}`, text: pct(r.roi) })),
@@ -154,12 +175,20 @@ export async function renderLearning(root) {
         }))));
     }
     const card = (title, body, note) => h("section", { class: "card" }, h("div", { class: "card-head" }, h("h2", { class: "card-title", text: title })), body, note ? h("p", { class: "note-line", text: note }) : "");
-    const avgNote = `Green means better than the average return of ${pct(avg)}, amber means worse, red means it lost money. Faded rows have too few sales to trust.`;
+    const scoreNote = "Buy score (0–100) blends return (30%), profit per ticket (30%), win rate (25%) and how many sales there were (15%), so a cheap ticket that doubled for $3 doesn't outrank a $400 seat that made $80. 65+ is strong, under 40 is weak.";
+    const avgNote = `Sorted by buy score where it applies. Return colours: green means better than the average return of ${pct(avg)}, amber means worse, red means it lost money. Faded rows have too few sales to trust.`;
 
     out.replaceChildren(
       tiles,
-      card("Lessons", lessonEl, "The biggest gaps between the best and worst choice in each area, only counting groups with enough sales to trust."),
+      card("Lessons", lessonEl, `The biggest gaps between the best and worst choice in each area by buy score, only counting groups with enough sales to trust. ${scoreNote}`),
       card("Combinations to go for and to be careful with", combosEl, "Section type + price paid + how far ahead, with at least 12 sales each. Use these as a starting point, not a rule."),
+      h("div", { class: "grid g-2e" },
+        card("By event type", breakdown(data.etype, { label: "Event type", sortByRoi: true, filter: "type" }), "Concerts, comedy, theater & shows, sports and parking. Click one to focus everything on it."),
+        (data.sport || []).length ? card("Sports by kind", breakdown(data.sport, { label: "Sport", sortByRoi: true, filter: "sport" }), "Sports behaves differently from concerts, so it gets its own view. Click a sport to focus on it.") :
+          card("Sports by kind", h("p", { class: "muted", text: "No sports sales in this slice." }))),
+      UI.book === "plt" ? "" : h("div", { class: "grid g-2e" },
+        card("Big names vs your finds", breakdown(data.fame, { label: "Artist kind", filter: "fame" }), "Big names = artists the bosses track in PLT. Your finds = everything else you bought. This is where your own edge shows."),
+        card("Your finds, best first", breakdown(data.fame_artists, { label: "Artist (not in PLT)", sortByRoi: true, filter: "artist" }), "Artists you sold that PLT doesn't track, ranked by buy score.")),
       card("Section vs price paid", heat, "Each square is the return for that section type at that price. The number under it is how many sales. Click a square to focus everything on it."),
       h("div", { class: "grid g-2e" },
         card("By section", breakdown(data.tier, { label: "Section", sortByRoi: true, filter: "tier" }), avgNote),
