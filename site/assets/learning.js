@@ -24,7 +24,12 @@ export function buyScore(r) {
 }
 const scoreTone = (s) => (s == null ? "" : s >= 65 ? "good" : s >= 50 ? "" : s >= 40 ? "meh" : "bad");
 
+const cache = new Map(); // results by filter set, so going back to a view is instant
+const FILTERS = ["artist", "city", "tier", "price", "type", "sport", "fame"];
+const LABELS = { artist: "Artist", city: "City", tier: "Section", price: "Price paid", type: "Event type", sport: "Sport", fame: "Artist kind" };
+
 export async function renderLearning(root) {
+  FILTERS.forEach((k) => (UI[k] = "")); // every visit starts with the full picture
   const filters = h("div");
   const out = h("div", { class: "stack" }, h("p", { class: "muted", text: "Crunching your sales…" }));
   root.replaceChildren(
@@ -36,13 +41,22 @@ export async function renderLearning(root) {
   let seq = 0, data = null;
   async function load() {
     const my = ++seq;
-    out.replaceChildren(h("p", { class: "muted", text: "Crunching your sales…" }));
     const from = UI.period === "all" ? null : new Date(Date.now() - Number(UI.period) * 86400000).toISOString().slice(0, 10);
-    const { data: r, error } = await sb.rpc("learning_center", {
+    const args = {
       p_book: UI.book, p_from: from, p_to: null, p_artist: UI.artist || null, p_city: UI.city || null, p_tier: UI.tier || null, p_price: UI.price || null, p_type: UI.type || null, p_sport: UI.sport || null, p_fame: UI.fame || null,
-    });
+    };
+    const ck = JSON.stringify({ ...args, p_from: UI.period });
+    let hit = cache.get(ck);
+    if (!hit) { try { hit = JSON.parse(localStorage.getItem("lc:" + ck) || "null"); } catch { hit = null; } }
+    out.classList.toggle("lc-loading", !hit);
+    if (hit) { data = hit; paintFilters(); paintBody(); } // show the last result right away, then refresh it
+    const { data: r, error } = await sb.rpc("learning_center", args);
     if (my !== seq) return;
-    if (error) { out.replaceChildren(h("p", { class: "neg", text: niceError(error) })); return; }
+    out.classList.remove("lc-loading");
+    if (error) { if (!hit) out.replaceChildren(h("p", { class: "neg", text: niceError(error) })); return; }
+    cache.set(ck, r);
+    if (!FILTERS.some((k) => UI[k])) { try { localStorage.setItem("lc:" + ck, JSON.stringify(r)); } catch { /* full: fine */ } }
+    if (hit && JSON.stringify(hit) === JSON.stringify(r)) return;
     data = r; paintFilters(); paintBody();
   }
 
@@ -60,6 +74,7 @@ export async function renderLearning(root) {
     s.onchange = () => { UI[key] = s.value; load(); };
     return h("div", { class: "lc-field" }, h("span", { class: "lbl", text: label }), s);
   }
+  function clearAll() { FILTERS.forEach((k) => (UI[k] = "")); artistIn.value = ""; load(); }
   function paintFilters() {
     const cities = (data?.cities || []).slice().sort();
     const tiers = (data?.tiers || []).slice().sort();
@@ -74,7 +89,12 @@ export async function renderLearning(root) {
         pick("Event type", "type", types), (UI.type === "Sports" || UI.sport) && sports.length ? pick("Sport", "sport", sports) : "",
         pick("City", "city", cities), pick("Section", "tier", tiers), pick("Price paid", "price", PRICES),
         UI.book !== "plt" ? pick("Artist kind", "fame", FAME) : "",
-        active ? h("button", { type: "button", class: "ghost", onclick: () => { Object.assign(UI, { artist: "", city: "", tier: "", price: "", type: "", sport: "", fame: "" }); artistIn.value = ""; load(); } }, "Clear") : "")));
+        active ? h("button", { type: "button", class: "ghost", onclick: clearAll }, "Clear") : "")),
+      active ? h("div", { class: "lc-active" },
+        h("b", { text: "Showing only:" }),
+        FILTERS.filter((k) => UI[k]).map((k) => h("button", { type: "button", class: "pill lc-chip", title: "Remove this filter",
+          onclick: () => { UI[k] = ""; if (k === "artist") artistIn.value = ""; if (k === "type") UI.sport = ""; load(); } }, `${LABELS[k]}: ${UI[k]} ✕`)),
+        h("button", { type: "button", class: "lc-showall", onclick: clearAll }, "Show everything")) : ""));
   }
 
   // ---------- body ----------

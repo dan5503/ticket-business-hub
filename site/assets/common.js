@@ -109,8 +109,44 @@ export function startIdleTimer(minutes = 30) {
 }
 
 /* ---------- data ---------- */
-// Supabase returns max 1000 rows per request, so page through everything.
-export async function fetchAll(table, columns, order = "created_at") {
+// Supabase returns max 1000 rows per request. We page in parallel (several pages at once) instead of one by one.
+// Big sales tables (yours and PLT) are also kept on this device: the first load saves them, and after that
+// only rows added or changed since last time are downloaded. If rows were removed, it quietly reloads in full.
+const INCREMENTAL = new Set(["sales", "plt_sales_clean"]);
+const mem = new Map();
+
+async function countRows(table) {
+  const { count, error } = await sb.from(table).select("id", { count: "exact", head: true });
+  if (error) throw error;
+  return count ?? 0;
+}
+async function pagesParallel(table, columns, order, total, filter) {
+  const pages = Math.max(1, Math.ceil(total / 1000)), out = new Array(pages);
+  let next = 0;
+  async function worker() {
+    while (next < pages) {
+      const i = next++;
+      let q = sb.from(table).select(columns);
+      if (filter) q = filter(q);
+      const { data, error } = await q.order(order, { ascending: true }).order("id").range(i * 1000, i * 1000 + 999);
+      if (error) throw error;
+      out[i] = data;
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(6, pages) }, worker));
+  const rows = out.flat();
+  // rows may have been added while paging: pick up any stragglers past the counted end
+  if (out[pages - 1]?.length === 1000) {
+    for (let from = pages * 1000; ; from += 1000) {
+      let q = sb.from(table).select(columns); if (filter) q = filter(q);
+      const { data, error } = await q.order(order, { ascending: true }).order("id").range(from, from + 999);
+      if (error) throw error;
+      rows.push(...data); if (data.length < 1000) break;
+    }
+  }
+  return rows;
+}
+async function pagesSequential(table, columns, order) {
   const out = [];
   for (let from = 0; ; from += 1000) {
     const { data, error } = await sb.from(table).select(columns).order(order, { ascending: true }).order("id").range(from, from + 999);
@@ -119,6 +155,82 @@ export async function fetchAll(table, columns, order = "created_at") {
     if (data.length < 1000) break;
   }
   return out;
+}
+
+// tiny IndexedDB wrapper (falls back to memory only if the browser blocks it)
+let dbp = null;
+function idb() {
+  if (dbp) return dbp;
+  dbp = new Promise((res) => {
+    try {
+      const r = indexedDB.open("hub-cache", 1);
+      r.onupgradeneeded = () => r.result.createObjectStore("t");
+      r.onsuccess = () => res(r.result);
+      r.onerror = () => res(null);
+    } catch { res(null); }
+  });
+  return dbp;
+}
+async function idbGet(k) {
+  const db = await idb(); if (!db) return null;
+  return new Promise((res) => { try { const r = db.transaction("t").objectStore("t").get(k); r.onsuccess = () => res(r.result || null); r.onerror = () => res(null); } catch { res(null); } });
+}
+async function idbPut(k, v) {
+  const db = await idb(); if (!db) return;
+  try { db.transaction("t", "readwrite").objectStore("t").put(v, k); } catch { /* storage full or blocked: memory cache still works */ }
+}
+export async function clearDataCache() {
+  mem.clear();
+  const db = await idb(); if (!db) return;
+  try { db.transaction("t", "readwrite").objectStore("t").clear(); } catch { /* ignore */ }
+}
+
+const cmp = (order) => (a, b) => {
+  const x = a[order], y = b[order];
+  if (x !== y) return x == null ? -1 : y == null ? 1 : x < y ? -1 : 1;
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+};
+
+export async function fetchAll(table, columns, order = "created_at") {
+  if (!INCREMENTAL.has(table)) {
+    // small tables/views: one request usually; page in parallel when big
+    try {
+      const total = await countRows(table);
+      return await pagesParallel(table, columns, order, total);
+    } catch { return pagesSequential(table, columns, order); }
+  }
+  const cols = [...new Set([...columns.split(","), "id", "updated_at"])].join(",");
+  const { data: sess } = await sb.auth.getSession();
+  const key = `${sess?.session?.user?.id || "anon"}|${table}|${cols}|${order}`;
+  let c = mem.get(key) || (await idbGet(key));
+  try {
+    if (c?.rows?.length) {
+      const since = c.max;
+      const [total, changed] = await Promise.all([
+        countRows(table),
+        pagesParallel(table, cols, "updated_at", 1000, (q) => q.gt("updated_at", since)),
+      ]);
+      if (changed.length) {
+        const byId = new Map(c.rows.map((r) => [r.id, r]));
+        changed.forEach((r) => byId.set(r.id, r));
+        c = { rows: [...byId.values()].sort(cmp(order)), max: changed.reduce((m, r) => (r.updated_at > m ? r.updated_at : m), since) };
+      }
+      if (c.rows.length === total) {
+        mem.set(key, c);
+        if (changed.length) idbPut(key, c);
+        return c.rows;
+      }
+      // rows were removed somewhere: fall through to a full reload
+    }
+    const total = await countRows(table);
+    const rows = await pagesParallel(table, cols, order, total);
+    c = { rows, max: rows.reduce((m, r) => (r.updated_at > m ? r.updated_at : m), "") };
+    mem.set(key, c); idbPut(key, c);
+    return rows;
+  } catch (e) {
+    if (c?.rows) return c.rows; // offline or hiccup: show what we have
+    throw e;
+  }
 }
 
 export async function copyText(text, label = "Copied") {

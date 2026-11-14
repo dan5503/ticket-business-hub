@@ -1,4 +1,4 @@
-import { sb, $, $$, h, requireSession, startIdleTimer, toast, fmtMoney, fmtPct } from "./common.js";
+import { sb, $, $$, h, requireSession, startIdleTimer, clearDataCache, toast, fmtMoney, fmtPct } from "./common.js";
 import { makePortfolio, MY_TABS, PLT_TABS } from "./portfolio.js";
 import { renderInventory } from "./inventory.js";
 import { renderDiscord } from "./discord.js";
@@ -10,7 +10,7 @@ import { renderDeals, renderPresales, renderSignups } from "./deals.js";
 await requireSession();
 startIdleTimer(30);
 
-$("#signout").onclick = async () => { await sb.auth.signOut(); location.replace("index.html"); };
+$("#signout").onclick = async () => { await clearDataCache(); await sb.auth.signOut(); location.replace("index.html"); };
 
 /* ---------- clock (New York time) ---------- */
 const clock = $("#clock");
